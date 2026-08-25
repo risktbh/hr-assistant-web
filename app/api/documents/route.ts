@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(arrayBuffer);
     
     const rawText = await new Promise<string>((resolve, reject) => {
-        const pdfParser = new PDFParser(null, 1); // Parameter 1 = mode ekstraksi teks mentah
+        const pdfParser = new PDFParser(null, true);
         
         pdfParser.on("pdfParser_dataError", (errData: any) => reject(errData.parserError));
         pdfParser.on("pdfParser_dataReady", () => {
