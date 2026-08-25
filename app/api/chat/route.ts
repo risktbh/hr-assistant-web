@@ -87,6 +87,9 @@ function sseEvent(
 function extractText(
   content: any,
 ): string {
+  /*
+   * 1. String biasa
+   */
   if (
     typeof content ===
     'string'
@@ -94,11 +97,47 @@ function extractText(
     return content;
   }
 
+  /*
+   * 2. Content block object tunggal
+   *
+   * Contoh:
+   * {
+   *   type: 'text',
+   *   text: 'Halo...'
+   * }
+   */
+  if (
+    content &&
+    typeof content ===
+      'object' &&
+    !Array.isArray(content)
+  ) {
+    if (
+      typeof content.text ===
+      'string'
+    ) {
+      return content.text;
+    }
+
+    if (
+      typeof content.content ===
+      'string'
+    ) {
+      return content.content;
+    }
+  }
+
+  /*
+   * 3. Array content blocks
+   */
   if (
     Array.isArray(content)
   ) {
     return content
       .map((part: any) => {
+        /*
+         * Array string
+         */
         if (
           typeof part ===
           'string'
@@ -106,13 +145,27 @@ function extractText(
           return part;
         }
 
+        /*
+         * Standard LangChain text block
+         */
         if (
-          part?.type ===
-            'text' &&
-          typeof part.text ===
-            'string'
+          part &&
+          typeof part ===
+            'object'
         ) {
-          return part.text;
+          if (
+            typeof part.text ===
+            'string'
+          ) {
+            return part.text;
+          }
+
+          if (
+            typeof part.content ===
+            'string'
+          ) {
+            return part.content;
+          }
         }
 
         return '';
@@ -822,6 +875,14 @@ Jangan mengarang informasi yang tidak tersedia.
                 ) {
                   break;
                 }
+                console.log(
+                  '[STREAM CHUNK]',
+                  JSON.stringify(
+                    chunk,
+                    null,
+                    2,
+                  ),
+                );
 
                 const text =
                   extractText(
