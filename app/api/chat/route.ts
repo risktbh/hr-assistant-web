@@ -87,8 +87,14 @@ function sseEvent(
 function extractText(
   content: any,
 ): string {
+  if (
+    content == null
+  ) {
+    return '';
+  }
+
   /*
-   * 1. String biasa
+   * String langsung
    */
   if (
     typeof content ===
@@ -98,85 +104,95 @@ function extractText(
   }
 
   /*
-   * 2. Content block object tunggal
-   *
-   * Contoh:
-   * {
-   *   type: 'text',
-   *   text: 'Halo...'
-   * }
+   * Number / boolean / dll
    */
   if (
-    content &&
-    typeof content ===
-      'object' &&
-    !Array.isArray(content)
+    typeof content !==
+    'object'
   ) {
-    if (
-      typeof content.text ===
-      'string'
-    ) {
-      return content.text;
-    }
-
-    if (
-      typeof content.content ===
-      'string'
-    ) {
-      return content.content;
-    }
+    return '';
   }
 
   /*
-   * 3. Array content blocks
+   * Array content blocks
    */
   if (
     Array.isArray(content)
   ) {
     return content
-      .map((part: any) => {
-        /*
-         * Array string
-         */
-        if (
-          typeof part ===
-          'string'
-        ) {
-          return part;
-        }
+      .map((part) =>
+        extractText(part),
+      )
+      .filter(Boolean)
+      .join('');
+  }
 
-        /*
-         * Standard LangChain text block
-         */
-        if (
-          part &&
-          typeof part ===
-            'object'
-        ) {
-          if (
-            typeof part.text ===
-            'string'
-          ) {
-            return part.text;
-          }
+  /*
+   * {
+   *   text: "..."
+   * }
+   */
+  if (
+    typeof content.text ===
+    'string'
+  ) {
+    return content.text;
+  }
 
-          if (
-            typeof part.content ===
-            'string'
-          ) {
-            return part.content;
-          }
-        }
+  /*
+   * {
+   *   content: "..."
+   * }
+   */
+  if (
+    typeof content.content ===
+    'string'
+  ) {
+    return content.content;
+  }
 
-        return '';
-      })
+  /*
+   * Nested:
+   * {
+   *   content: {...}
+   * }
+   */
+  if (
+    content.content
+  ) {
+    const nestedText =
+      extractText(
+        content.content,
+      );
+
+    if (
+      nestedText
+    ) {
+      return nestedText;
+    }
+  }
+
+  /*
+   * Structured content:
+   * {
+   *   parts: [...]
+   * }
+   */
+  if (
+    Array.isArray(
+      content.parts,
+    )
+  ) {
+    return content.parts
+      .map((part: any) =>
+        extractText(part),
+      )
       .filter(Boolean)
       .join('');
   }
 
   return '';
 }
-
 /* =========================================================
    POST /api/chat
 ========================================================= */
@@ -844,6 +860,9 @@ Jangan mengarang informasi yang tidak tersedia.
             /* ===============================================
                TOOL / RAG FINAL RESPONSE - REAL STREAM
             =============================================== */
+            /* ===============================================
+              TOOL / RAG FINAL RESPONSE - REAL STREAM
+            =============================================== */
 
             if (
               followUpMessages
@@ -866,6 +885,9 @@ Jangan mengarang informasi yang tidak tersedia.
               usedModelType =
                 followUpResult.modelUsed;
 
+              let chunkCount = 0;
+              let textChunkCount = 0;
+
               for await (
                 const chunk of
                   followUpResult.stream
@@ -875,23 +897,61 @@ Jangan mengarang informasi yang tidak tersedia.
                 ) {
                   break;
                 }
+
+                chunkCount++;
+
+                let text = '';
+
+                /*
+                * PRIORITAS:
+                * AIMessageChunk.text
+                */
+                if (
+                  typeof chunk?.text ===
+                    'string' &&
+                  chunk.text.length > 0
+                ) {
+                  text =
+                    chunk.text;
+                }
+
+                /*
+                * FALLBACK:
+                * chunk.content
+                */
+                else {
+                  text =
+                    extractText(
+                      chunk?.content,
+                    );
+                }
+
+                /*
+                * DEBUG SEMENTARA
+                * Lihat hasilnya di Vercel Logs
+                */
                 console.log(
                   '[STREAM CHUNK]',
-                  JSON.stringify(
-                    chunk,
-                    null,
-                    2,
-                  ),
-                );
+                  {
+                    chunkNumber:
+                      chunkCount,
 
-                const text =
-                  extractText(
-                    chunk.content,
-                  );
+                    text:
+                      chunk?.text,
+
+                    content:
+                      chunk?.content,
+
+                    extractedText:
+                      text,
+                  },
+                );
 
                 if (!text) {
                   continue;
                 }
+
+                textChunkCount++;
 
                 finalAnswer +=
                   text;
@@ -903,10 +963,22 @@ Jangan mengarang informasi yang tidak tersedia.
                   },
                 );
               }
+
+              console.log(
+                '[STREAM SUMMARY]',
+                {
+                  chunkCount,
+
+                  textChunkCount,
+
+                  answerLength:
+                    finalAnswer.length,
+                },
+              );
             }
 
             /* ===============================================
-               DIRECT CHAT
+              DIRECT RESPONSE / TANPA TOOL
             =============================================== */
 
             else {
