@@ -1,0 +1,74 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+// 1. Tabel Induk Baru (Untuk melacak file PDF)
+model Document {
+  id        String   @id @default(uuid())
+  filename  String
+  createdAt DateTime @default(now())
+
+  // Relasi ke potongan teks (Chunks)
+  chunks DocumentChunk[]
+}
+
+// 2. Modifikasi Tabel Chunks Lama
+model DocumentChunk {
+  id        String                      @id @default(uuid())
+  content   String
+  metadata  Json?
+  embedding Unsupported("vector(768)")?
+  createdAt DateTime                    @default(now())
+
+  // Kolom baru untuk menyambungkan ke Tabel Induk
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+// Menyimpan informasi sesi obrolan (judul yang tampil di sidebar)
+model ChatSession {
+  id        String        @id @default(uuid())
+  title     String // Misalnya: "Aturan Cuti Menikah"
+  userId    String // ID karyawan (sementara bisa pakai "riski" atau dummy)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[] // Relasi 1 ke banyak (1 sesi punya banyak pesan)
+}
+
+// Menyimpan detail pesan dari User dan AI
+model ChatMessage {
+  id        String   @id @default(uuid())
+  sessionId String
+  role      String // "user" atau "assistant"
+  content   String // Isi teks pesan
+  sources   String[] // Menyimpan sumber referensi dari RAG (array text)
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+// Menyimpan daftar karyawan untuk fitur Directory
+model Employee {
+  id         String  @id @default(cuid())
+  name       String
+  position   String
+  department String
+  email      String  @unique
+  phone      String
+  status     String  @default("WFO")
+  location   String
+  initial    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())  @updatedAt
+
+  @@index([name])
+  @@index([department])
+  @@index([status])
+}
