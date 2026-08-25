@@ -23,7 +23,7 @@ model DocumentChunk {
   id        String                      @id @default(uuid())
   content   String
   metadata  Json?
-  embedding Unsupported("vector(768)")?
+  embedding Unsupported("vector(3072)")?
   createdAt DateTime                    @default(now())
 
   // Kolom baru untuk menyambungkan ke Tabel Induk
