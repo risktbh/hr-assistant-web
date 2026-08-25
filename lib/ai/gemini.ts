@@ -1,6 +1,6 @@
 import {
   ChatGoogleGenerativeAI,
-} from "@langchain/google-genai";
+} from '@langchain/google-genai';
 
 /* =========================================================
    CONFIG
@@ -8,11 +8,11 @@ import {
 
 const PRIMARY_MODEL =
   process.env.GEMINI_PRIMARY_MODEL ||
-  "gemini-3.5-flash-lite";
+  'gemini-3.5-flash-lite';
 
 const FALLBACK_MODEL =
   process.env.GEMINI_FALLBACK_MODEL ||
-  "gemini-3.1-flash-lite";
+  'gemini-3.1-flash-lite';
 
 const MAX_RETRIES =
   Number(
@@ -26,6 +26,10 @@ const MAX_CONCURRENCY =
       4,
   );
 
+const API_KEY =
+  process.env.GOOGLE_API_KEY ||
+  process.env.GEMINI_API_KEY;
+
 /* =========================================================
    MODEL
 ========================================================= */
@@ -36,6 +40,7 @@ const primaryLLM =
     maxRetries: MAX_RETRIES,
     maxConcurrency:
       MAX_CONCURRENCY,
+    apiKey: API_KEY,
   });
 
 const fallbackLLM =
@@ -44,6 +49,7 @@ const fallbackLLM =
     maxRetries: MAX_RETRIES,
     maxConcurrency:
       MAX_CONCURRENCY,
+    apiKey: API_KEY,
   });
 
 /* =========================================================
@@ -52,20 +58,29 @@ const fallbackLLM =
 
 type GeminiTools =
   Parameters<
-    ChatGoogleGenerativeAI["bindTools"]
+    ChatGoogleGenerativeAI['bindTools']
   >[0];
 
 type InvokeGeminiOptions = {
   tools?: GeminiTools;
   stage?: string;
+  signal?: AbortSignal;
 };
 
 export type GeminiResult = {
   response: any;
   model: string;
   modelUsed:
-    | "primary"
-    | "fallback";
+    | 'primary'
+    | 'fallback';
+};
+
+export type GeminiStreamResult = {
+  stream: AsyncIterable<any>;
+  model: string;
+  modelUsed:
+    | 'primary'
+    | 'fallback';
 };
 
 /* =========================================================
@@ -75,9 +90,9 @@ export type GeminiResult = {
 export class AIServiceError
   extends Error {
   code:
-    | "AI_RATE_LIMIT"
-    | "AI_UNAVAILABLE"
-    | "AI_REQUEST_FAILED";
+    | 'AI_RATE_LIMIT'
+    | 'AI_UNAVAILABLE'
+    | 'AI_REQUEST_FAILED';
 
   status: number;
 
@@ -92,9 +107,9 @@ export class AIServiceError
     message: string;
 
     code:
-      | "AI_RATE_LIMIT"
-      | "AI_UNAVAILABLE"
-      | "AI_REQUEST_FAILED";
+      | 'AI_RATE_LIMIT'
+      | 'AI_UNAVAILABLE'
+      | 'AI_REQUEST_FAILED';
 
     status: number;
 
@@ -103,7 +118,7 @@ export class AIServiceError
     super(message);
 
     this.name =
-      "AIServiceError";
+      'AIServiceError';
 
     this.code =
       code;
@@ -145,7 +160,7 @@ function getErrorStatus(
   | undefined {
   if (
     typeof error !==
-      "object" ||
+      'object' ||
     error === null
   ) {
     return undefined;
@@ -179,24 +194,24 @@ function isRateLimitError(
 
   return (
     status === 429 ||
-    message.includes("429") ||
+    message.includes('429') ||
     message.includes(
-      "resource_exhausted",
+      'resource_exhausted',
     ) ||
     message.includes(
-      "resource exhausted",
+      'resource exhausted',
     ) ||
     message.includes(
-      "rate limit",
+      'rate limit',
     ) ||
     message.includes(
-      "rate_limit",
+      'rate_limit',
     ) ||
     message.includes(
-      "quota",
+      'quota',
     ) ||
     message.includes(
-      "too many requests",
+      'too many requests',
     )
   );
 }
@@ -222,25 +237,25 @@ function shouldFallback(
 
   return (
     message.includes(
-      "resource_exhausted",
+      'resource_exhausted',
     ) ||
     message.includes(
-      "rate limit",
+      'rate limit',
     ) ||
     message.includes(
-      "quota",
+      'quota',
     ) ||
     message.includes(
-      "too many requests",
+      'too many requests',
     ) ||
     message.includes(
-      "service unavailable",
+      'service unavailable',
     ) ||
     message.includes(
-      "overloaded",
+      'overloaded',
     ) ||
     message.includes(
-      "timeout",
+      'timeout',
     )
   );
 }
@@ -253,17 +268,8 @@ async function invokeModel(
   llm: ChatGoogleGenerativeAI,
   input: any,
   tools?: GeminiTools,
+  signal?: AbortSignal,
 ) {
-  /*
-   * Kalau ada tools:
-   *
-   * llm.bindTools(tools).invoke(...)
-   *
-   * Kalau tidak:
-   *
-   * llm.invoke(...)
-   */
-
   if (
     tools &&
     tools.length > 0
@@ -273,14 +279,111 @@ async function invokeModel(
 
     return llmWithTools.invoke(
       input,
+      {
+        signal,
+      },
     );
   }
 
-  return llm.invoke(input);
+  return llm.invoke(
+    input,
+    {
+      signal,
+    },
+  );
 }
 
 /* =========================================================
-   PRIMARY + FALLBACK
+   STREAM MODEL
+========================================================= */
+
+async function streamModel(
+  llm: ChatGoogleGenerativeAI,
+  input: any,
+  tools?: GeminiTools,
+  signal?: AbortSignal,
+) {
+  if (
+    tools &&
+    tools.length > 0
+  ) {
+    const llmWithTools =
+      llm.bindTools(tools);
+
+    return llmWithTools.stream(
+      input,
+      {
+        signal,
+      },
+    );
+  }
+
+  return llm.stream(
+    input,
+    {
+      signal,
+    },
+  );
+}
+
+/* =========================================================
+   OPEN / PRIME STREAM
+========================================================= */
+
+/*
+ * Ambil chunk pertama sebelum stream dikembalikan.
+ *
+ * Manfaat:
+ * - jika primary gagal sebelum output pertama,
+ *   kita masih bisa mencoba fallback;
+ * - setelah token sudah dikirim ke browser,
+ *   kita tidak mencoba mencampur jawaban primary
+ *   dan fallback dalam satu response.
+ */
+async function openStream(
+  llm: ChatGoogleGenerativeAI,
+  input: any,
+  tools?: GeminiTools,
+  signal?: AbortSignal,
+): Promise<AsyncIterable<any>> {
+  const source =
+    await streamModel(
+      llm,
+      input,
+      tools,
+      signal,
+    );
+
+  const iterator =
+    source[
+      Symbol.asyncIterator
+    ]();
+
+  const first =
+    await iterator.next();
+
+  async function* replayStream() {
+    if (!first.done) {
+      yield first.value;
+    }
+
+    while (true) {
+      const next =
+        await iterator.next();
+
+      if (next.done) {
+        break;
+      }
+
+      yield next.value;
+    }
+  }
+
+  return replayStream();
+}
+
+/* =========================================================
+   PRIMARY + FALLBACK (NON-STREAM)
 ========================================================= */
 
 export async function invokeGemini(
@@ -289,14 +392,13 @@ export async function invokeGemini(
 ): Promise<GeminiResult> {
   const {
     tools,
-    stage = "chat",
+    stage = 'chat',
+    signal,
   } = options;
 
-  /*
-   * =====================================================
-   * PRIMARY
-   * =====================================================
-   */
+  /* =====================================================
+     PRIMARY
+  ===================================================== */
 
   try {
     console.info(
@@ -308,6 +410,7 @@ export async function invokeGemini(
         primaryLLM,
         input,
         tools,
+        signal,
       );
 
     console.info(
@@ -319,21 +422,18 @@ export async function invokeGemini(
       model:
         PRIMARY_MODEL,
       modelUsed:
-        "primary",
+        'primary',
     };
   } catch (primaryError) {
+    if (signal?.aborted) {
+      throw primaryError;
+    }
+
     console.error(
       `[Gemini:${stage}] primary failed`,
       primaryError,
     );
 
-    /*
-     * Jangan fallback untuk error seperti:
-     *
-     * 400 invalid request
-     * 401 API key
-     * malformed prompt
-     */
     if (
       !shouldFallback(
         primaryError,
@@ -341,10 +441,10 @@ export async function invokeGemini(
     ) {
       throw new AIServiceError({
         message:
-          "Permintaan ke AI tidak dapat diproses.",
+          'Permintaan ke AI tidak dapat diproses.',
 
         code:
-          "AI_REQUEST_FAILED",
+          'AI_REQUEST_FAILED',
 
         status: 500,
 
@@ -354,11 +454,9 @@ export async function invokeGemini(
     }
   }
 
-  /*
-   * =====================================================
-   * FALLBACK
-   * =====================================================
-   */
+  /* =====================================================
+     FALLBACK
+  ===================================================== */
 
   try {
     console.warn(
@@ -370,6 +468,7 @@ export async function invokeGemini(
         fallbackLLM,
         input,
         tools,
+        signal,
       );
 
     console.info(
@@ -381,9 +480,13 @@ export async function invokeGemini(
       model:
         FALLBACK_MODEL,
       modelUsed:
-        "fallback",
+        'fallback',
     };
   } catch (fallbackError) {
+    if (signal?.aborted) {
+      throw fallbackError;
+    }
+
     console.error(
       `[Gemini:${stage}] fallback failed`,
       fallbackError,
@@ -396,10 +499,10 @@ export async function invokeGemini(
     ) {
       throw new AIServiceError({
         message:
-          "AI Assistant sedang mencapai batas penggunaan. Silakan coba kembali beberapa saat lagi.",
+          'AI Assistant sedang mencapai batas penggunaan. Silakan coba kembali beberapa saat lagi.',
 
         code:
-          "AI_RATE_LIMIT",
+          'AI_RATE_LIMIT',
 
         status: 503,
 
@@ -410,10 +513,154 @@ export async function invokeGemini(
 
     throw new AIServiceError({
       message:
-        "AI Assistant sedang tidak tersedia sementara. Silakan coba kembali beberapa saat lagi.",
+        'AI Assistant sedang tidak tersedia sementara. Silakan coba kembali beberapa saat lagi.',
 
       code:
-        "AI_UNAVAILABLE",
+        'AI_UNAVAILABLE',
+
+      status: 503,
+
+      originalError:
+        fallbackError,
+    });
+  }
+}
+
+/* =========================================================
+   PRIMARY + FALLBACK (STREAM)
+========================================================= */
+
+export async function streamGemini(
+  input: any,
+  options: InvokeGeminiOptions = {},
+): Promise<GeminiStreamResult> {
+  const {
+    tools,
+    stage = 'chat-stream',
+    signal,
+  } = options;
+
+  /* =====================================================
+     PRIMARY
+  ===================================================== */
+
+  try {
+    console.info(
+      `[Gemini:${stage}] streaming primary → ${PRIMARY_MODEL}`,
+    );
+
+    const stream =
+      await openStream(
+        primaryLLM,
+        input,
+        tools,
+        signal,
+      );
+
+    console.info(
+      `[Gemini:${stage}] stream started → ${PRIMARY_MODEL}`,
+    );
+
+    return {
+      stream,
+      model:
+        PRIMARY_MODEL,
+      modelUsed:
+        'primary',
+    };
+  } catch (primaryError) {
+    if (signal?.aborted) {
+      throw primaryError;
+    }
+
+    console.error(
+      `[Gemini:${stage}] primary stream failed`,
+      primaryError,
+    );
+
+    if (
+      !shouldFallback(
+        primaryError,
+      )
+    ) {
+      throw new AIServiceError({
+        message:
+          'Permintaan ke AI tidak dapat diproses.',
+
+        code:
+          'AI_REQUEST_FAILED',
+
+        status: 500,
+
+        originalError:
+          primaryError,
+      });
+    }
+  }
+
+  /* =====================================================
+     FALLBACK
+  ===================================================== */
+
+  try {
+    console.warn(
+      `[Gemini:${stage}] streaming fallback → ${FALLBACK_MODEL}`,
+    );
+
+    const stream =
+      await openStream(
+        fallbackLLM,
+        input,
+        tools,
+        signal,
+      );
+
+    console.info(
+      `[Gemini:${stage}] fallback stream started → ${FALLBACK_MODEL}`,
+    );
+
+    return {
+      stream,
+      model:
+        FALLBACK_MODEL,
+      modelUsed:
+        'fallback',
+    };
+  } catch (fallbackError) {
+    if (signal?.aborted) {
+      throw fallbackError;
+    }
+
+    console.error(
+      `[Gemini:${stage}] fallback stream failed`,
+      fallbackError,
+    );
+
+    if (
+      isRateLimitError(
+        fallbackError,
+      )
+    ) {
+      throw new AIServiceError({
+        message:
+          'AI Assistant sedang mencapai batas penggunaan. Silakan coba kembali beberapa saat lagi.',
+
+        code:
+          'AI_RATE_LIMIT',
+
+        status: 503,
+
+        originalError:
+          fallbackError,
+      });
+    }
+
+    throw new AIServiceError({
+      message:
+        'AI Assistant sedang tidak tersedia sementara. Silakan coba kembali beberapa saat lagi.',
+
+      code:
+        'AI_UNAVAILABLE',
 
       status: 503,
 

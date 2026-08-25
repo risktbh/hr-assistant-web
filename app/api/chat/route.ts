@@ -7,7 +7,6 @@ import {
 } from '@langchain/google-genai';
 
 import { tool } from '@langchain/core/tools';
-
 import { z } from 'zod';
 
 import {
@@ -20,6 +19,7 @@ import {
 import {
   AIServiceError,
   invokeGemini,
+  streamGemini,
 } from '@/lib/ai/gemini';
 
 /* =========================================================
@@ -59,13 +59,69 @@ function jsonResponse(
     JSON.stringify(data),
     {
       status,
-
       headers: {
         'Content-Type':
           'application/json',
       },
     },
   );
+}
+
+function sseEvent(
+  event: string,
+  data: unknown,
+) {
+  return (
+    `event: ${event}\n` +
+    `data: ${JSON.stringify(
+      data,
+    )}\n\n`
+  );
+}
+
+/*
+ * LangChain dapat mengembalikan content sebagai:
+ * - string
+ * - array content block
+ */
+function extractText(
+  content: any,
+): string {
+  if (
+    typeof content ===
+    'string'
+  ) {
+    return content;
+  }
+
+  if (
+    Array.isArray(content)
+  ) {
+    return content
+      .map((part: any) => {
+        if (
+          typeof part ===
+          'string'
+        ) {
+          return part;
+        }
+
+        if (
+          part?.type ===
+            'text' &&
+          typeof part.text ===
+            'string'
+        ) {
+          return part.text;
+        }
+
+        return '';
+      })
+      .filter(Boolean)
+      .join('');
+  }
+
+  return '';
 }
 
 /* =========================================================
@@ -95,7 +151,6 @@ export async function POST(
         {
           error:
             'Pesan kosong',
-
           code:
             'EMPTY_MESSAGE',
         },
@@ -125,23 +180,12 @@ export async function POST(
         {
           error:
             'Server salah konfigurasi. API Key AI tidak tersedia.',
-
           code:
             'AI_CONFIG_ERROR',
         },
         500,
       );
     }
-
-    /*
-     * Tidak perlu lagi melakukan:
-     *
-     * process.env.GOOGLE_API_KEY =
-     * process.env.GEMINI_API_KEY
-     *
-     * Sebaiknya gemini.ts sendiri
-     * membaca kedua environment variable.
-     */
 
     /* =====================================================
        2. SESSION MANAGEMENT
@@ -153,10 +197,6 @@ export async function POST(
       sessionId || null;
 
     if (!currentSessionId) {
-      /*
-       * Percakapan baru.
-       */
-
       const newSession =
         await prisma.chatSession.create(
           {
@@ -179,11 +219,6 @@ export async function POST(
       currentSessionId =
         newSession.id;
     } else {
-      /*
-       * Update waktu supaya session
-       * naik ke atas di Sidebar.
-       */
-
       await prisma.chatSession.update(
         {
           where: {
@@ -298,11 +333,6 @@ export async function POST(
     const cariKebijakanHRTool =
       tool(
         async () => {
-          /*
-           * Implementasi sebenarnya
-           * dijalankan setelah AI
-           * memilih tool.
-           */
           return 'Tool dipanggil';
         },
         {
@@ -393,7 +423,7 @@ Jangan mengarang informasi yang tidak tersedia.
 
     /* =====================================================
        8. INITIAL LLM CALL
-       PRIMARY → RETRY → FALLBACK
+       TOOL SELECTION
     ===================================================== */
 
     const messages = [
@@ -409,27 +439,25 @@ Jangan mengarang informasi yang tidak tersedia.
     ];
 
     /*
-     * invokeGemini akan:
+     * Tool selection tetap non-streaming.
      *
-     * primary
-     *   ↓
-     * retry maksimal 2x
-     *   ↓
-     * fallback jika 429 / 503 / timeout
+     * Alasannya:
+     * server perlu mengetahui apakah Gemini memilih
+     * personal data, RAG, atau tidak memakai tool.
      */
-
     const initialResult =
       await invokeGemini(
         messages,
         {
           tools,
-
           stage:
             'tool-selection',
+          signal:
+            req.signal,
         },
       );
 
-    let aiResponse =
+    const aiResponse =
       initialResult.response as AIMessage;
 
     let usedModel =
@@ -453,12 +481,22 @@ Jangan mengarang informasi yang tidak tersedia.
       aiResponse.tool_calls ??
       [];
 
+    /*
+     * Jika null:
+     * initialResult adalah jawaban langsung.
+     *
+     * Jika ada array:
+     * jawaban final akan dibuat melalui streamGemini().
+     */
+    let followUpMessages:
+      any[] | null = null;
+
     if (
       toolCalls.length > 0
     ) {
       /*
-       * Saat ini kita proses
-       * satu tool call terlebih dahulu.
+       * Versi sekarang memproses satu
+       * tool call terlebih dahulu.
        */
       const toolCall =
         toolCalls[0];
@@ -499,14 +537,6 @@ Jangan mengarang informasi yang tidak tersedia.
               string;
           };
 
-        /*
-         * Embedding tetap menggunakan
-         * GoogleGenerativeAIEmbeddings.
-         *
-         * Fallback saat ini hanya
-         * untuk Chat Model.
-         */
-
         const embeddings =
           new GoogleGenerativeAIEmbeddings(
             {
@@ -528,10 +558,6 @@ Jangan mengarang informasi yang tidak tersedia.
             ',',
           )}]`;
 
-        /*
-         * Vector similarity search.
-         */
-
         const relevantChunks:
           any[] =
           await prisma.$queryRaw`
@@ -539,6 +565,7 @@ Jangan mengarang informasi yang tidak tersedia.
               content,
               metadata
             FROM "DocumentChunk"
+            WHERE embedding IS NOT NULL
             ORDER BY
               embedding <=>
               ${vectorString}::vector
@@ -552,10 +579,6 @@ Jangan mengarang informasi yang tidak tersedia.
           relevantChunks.length >
             0
         ) {
-          /*
-           * Gabungkan context.
-           */
-
           toolResult =
             relevantChunks
               .map(
@@ -568,10 +591,6 @@ Jangan mengarang informasi yang tidak tersedia.
               .join(
                 '\n\n',
               );
-
-          /*
-           * Ambil nama file sumber.
-           */
 
           const sourceNames =
             relevantChunks
@@ -636,236 +655,423 @@ Jangan mengarang informasi yang tidak tersedia.
       }
 
       /* ===================================================
-         10. TOOL FOLLOW-UP
+         10. BUILD TOOL FOLLOW-UP
       =================================================== */
 
-      const followUpMessages =
-        [
-          new SystemMessage(
-            systemPrompt,
-          ),
+      followUpMessages = [
+        new SystemMessage(
+          systemPrompt,
+        ),
 
-          ...formattedHistory,
+        ...formattedHistory,
 
-          new HumanMessage(
-            cleanMessage,
-          ),
-
-          /*
-           * AI response yang berisi
-           * tool call.
-           */
-
-          aiResponse,
-
-          /*
-           * Hasil tool.
-           */
-
-          new ToolMessage({
-            tool_call_id:
-              toolCall.id ||
-              'default_tool_id',
-
-            content:
-              String(
-                toolResult,
-              ),
-          }),
-        ];
-
-      /*
-       * Penting:
-       *
-       * Jangan lagi:
-       *
-       * await llm.invoke(...)
-       *
-       * Semua generation harus
-       * melewati invokeGemini().
-       */
-
-      const followUpResult =
-        await invokeGemini(
-          followUpMessages,
-          {
-            stage:
-              'tool-followup',
-          },
-        );
-
-      aiResponse =
-        followUpResult.response as AIMessage;
-
-      usedModel =
-        followUpResult.model;
-
-      usedModelType =
-        followUpResult.modelUsed;
-    }
-
-    /* =====================================================
-       11. FINALIZE ANSWER
-    ===================================================== */
-
-    let finalAnswer = '';
-
-    /*
-     * Seharusnya setelah tool follow-up
-     * sudah tidak ada tool call lagi.
-     */
-
-    if (
-      aiResponse.tool_calls &&
-      aiResponse.tool_calls
-        .length > 0
-    ) {
-      finalAnswer =
-        'Sistem saya sedang memproses pencarian dokumen, namun terjadi kesalahan. Mohon coba tanyakan kembali.';
-    }
-
-    /*
-     * Normal text response.
-     */
-
-    else if (
-      typeof aiResponse.content ===
-      'string'
-    ) {
-      finalAnswer =
-        aiResponse.content.trim();
-    }
-
-    /*
-     * Gemini / LangChain juga
-     * dapat memberikan content array.
-     */
-
-    else if (
-      Array.isArray(
-        aiResponse.content,
-      )
-    ) {
-      const textParts =
-        aiResponse.content
-          .map(
-            (content: any) => {
-              if (
-                typeof content ===
-                'string'
-              ) {
-                return content;
-              }
-
-              if (
-                content?.type ===
-                  'text' &&
-                typeof content.text ===
-                  'string'
-              ) {
-                return content.text;
-              }
-
-              return '';
-            },
-          )
-          .filter(Boolean);
-
-      finalAnswer =
-        textParts.join(
-          '\n',
-        );
-    }
-
-    /*
-     * Fallback jika content
-     * tidak bisa dibaca.
-     */
-
-    if (!finalAnswer) {
-      finalAnswer =
-        'Maaf, format respons dari AI tidak dapat dibaca.';
-    }
-
-    /*
-     * Jangan tampilkan sources jika
-     * response AI sebenarnya gagal
-     * memproses tool.
-     */
-
-    if (
-      finalAnswer.includes(
-        'Sistem saya sedang memproses',
-      )
-    ) {
-      extractedSources = [];
-    }
-
-    /* =====================================================
-       12. SAVE AI MESSAGE
-    ===================================================== */
-
-    await prisma.chatMessage.create({
-      data: {
-        sessionId:
-          currentSessionId,
-
-        role:
-          'assistant',
-
-        content:
-          finalAnswer,
-
-        sources:
-          extractedSources,
-      },
-    });
-
-    /* =====================================================
-       13. SUCCESS RESPONSE
-    ===================================================== */
-
-    console.info(
-      '[AI CHAT SUCCESS]',
-      {
-        sessionId:
-          currentSessionId,
-
-        model:
-          usedModel,
-
-        modelUsed:
-          usedModelType,
-
-        sources:
-          extractedSources.length,
-      },
-    );
-
-    return jsonResponse(
-      {
-        answer:
-          finalAnswer,
-
-        sources:
-          extractedSources,
-
-        sessionId:
-          currentSessionId,
+        new HumanMessage(
+          cleanMessage,
+        ),
 
         /*
-         * Sangat berguna saat development.
-         *
-         * primary / fallback
+         * AI response yang berisi tool call.
          */
+        aiResponse,
 
-        model:
-          usedModel,
+        /*
+         * Hasil tool.
+         */
+        new ToolMessage({
+          tool_call_id:
+            toolCall.id ||
+            'default_tool_id',
 
-        modelUsed:
-          usedModelType,
+          content:
+            String(
+              toolResult,
+            ),
+        }),
+      ];
+    }
+
+    /* =====================================================
+       11. PREPARE SSE STREAM
+    ===================================================== */
+
+    const encoder =
+      new TextEncoder();
+
+    /*
+     * Jika tidak ada tool, initial Gemini call sudah
+     * menghasilkan jawaban final.
+     *
+     * Jawaban direct-chat akan dikirim sebagai satu delta.
+     * Pertanyaan tool / RAG akan benar-benar token streaming.
+     */
+    const directAnswer =
+      followUpMessages
+        ? ''
+        : extractText(
+            aiResponse.content,
+          ).trim();
+
+    const stream =
+      new ReadableStream({
+        async start(
+          controller,
+        ) {
+          let finalAnswer = '';
+
+          let assistantSaved =
+            false;
+
+          const send = (
+            event: string,
+            data: unknown,
+          ) => {
+            try {
+              controller.enqueue(
+                encoder.encode(
+                  sseEvent(
+                    event,
+                    data,
+                  ),
+                ),
+              );
+
+              return true;
+            } catch {
+              return false;
+            }
+          };
+
+          const saveAssistant =
+            async () => {
+              if (
+                assistantSaved ||
+                !finalAnswer.trim()
+              ) {
+                return;
+              }
+
+              assistantSaved =
+                true;
+
+              await prisma.chatMessage.create(
+                {
+                  data: {
+                    sessionId:
+                      currentSessionId,
+
+                    role:
+                      'assistant',
+
+                    content:
+                      finalAnswer,
+
+                    sources:
+                      extractedSources,
+                  },
+                },
+              );
+            };
+
+          try {
+            /* ===============================================
+               META
+            =============================================== */
+
+            send(
+              'meta',
+              {
+                sessionId:
+                  currentSessionId,
+
+                sources:
+                  extractedSources,
+              },
+            );
+
+            /* ===============================================
+               TOOL / RAG FINAL RESPONSE - REAL STREAM
+            =============================================== */
+
+            if (
+              followUpMessages
+            ) {
+              const followUpResult =
+                await streamGemini(
+                  followUpMessages,
+                  {
+                    stage:
+                      'tool-followup',
+
+                    signal:
+                      req.signal,
+                  },
+                );
+
+              usedModel =
+                followUpResult.model;
+
+              usedModelType =
+                followUpResult.modelUsed;
+
+              for await (
+                const chunk of
+                  followUpResult.stream
+              ) {
+                if (
+                  req.signal.aborted
+                ) {
+                  break;
+                }
+
+                const text =
+                  extractText(
+                    chunk.content,
+                  );
+
+                if (!text) {
+                  continue;
+                }
+
+                finalAnswer +=
+                  text;
+
+                send(
+                  'delta',
+                  {
+                    text,
+                  },
+                );
+              }
+            }
+
+            /* ===============================================
+               DIRECT CHAT
+            =============================================== */
+
+            else {
+              finalAnswer =
+                directAnswer;
+
+              if (
+                finalAnswer
+              ) {
+                send(
+                  'delta',
+                  {
+                    text:
+                      finalAnswer,
+                  },
+                );
+              }
+            }
+
+            /* ===============================================
+               STOP GENERATION
+            =============================================== */
+
+            if (
+              req.signal.aborted
+            ) {
+              /*
+               * Jika ada partial answer, coba simpan
+               * agar Chat History tetap konsisten.
+               */
+              try {
+                await saveAssistant();
+              } catch (
+                saveError
+              ) {
+                console.error(
+                  '[AI CHAT] Gagal menyimpan partial response:',
+                  saveError,
+                );
+              }
+
+              console.info(
+                '[AI CHAT] Stream aborted by client',
+              );
+
+              try {
+                controller.close();
+              } catch {}
+
+              return;
+            }
+
+            /* ===============================================
+               EMPTY RESPONSE FALLBACK
+            =============================================== */
+
+            if (
+              !finalAnswer.trim()
+            ) {
+              finalAnswer =
+                'Maaf, format respons dari AI tidak dapat dibaca.';
+
+              send(
+                'delta',
+                {
+                  text:
+                    finalAnswer,
+                },
+              );
+            }
+
+            /* ===============================================
+               SAVE COMPLETE AI MESSAGE
+            =============================================== */
+
+            await saveAssistant();
+
+            /* ===============================================
+               LOG
+            =============================================== */
+
+            console.info(
+              '[AI CHAT SUCCESS]',
+              {
+                sessionId:
+                  currentSessionId,
+
+                model:
+                  usedModel,
+
+                modelUsed:
+                  usedModelType,
+
+                sources:
+                  extractedSources.length,
+
+                streamed:
+                  Boolean(
+                    followUpMessages,
+                  ),
+              },
+            );
+
+            /* ===============================================
+               DONE
+            =============================================== */
+
+            send(
+              'done',
+              {
+                model:
+                  usedModel,
+
+                modelUsed:
+                  usedModelType,
+              },
+            );
+
+            controller.close();
+          } catch (error) {
+            /*
+             * Browser menekan Stop / request disconnect.
+             */
+            if (
+              req.signal.aborted
+            ) {
+              try {
+                await saveAssistant();
+              } catch (
+                saveError
+              ) {
+                console.error(
+                  '[AI CHAT] Gagal menyimpan partial response:',
+                  saveError,
+                );
+              }
+
+              console.info(
+                '[AI CHAT] Stream aborted by client',
+              );
+
+              try {
+                controller.close();
+              } catch {}
+
+              return;
+            }
+
+            console.error(
+              '[AI STREAM ERROR]',
+              error,
+            );
+
+            /*
+             * Jika stream sudah menghasilkan partial text,
+             * simpan bagian yang sudah diterima.
+             */
+            try {
+              await saveAssistant();
+            } catch (
+              saveError
+            ) {
+              console.error(
+                '[AI CHAT] Gagal menyimpan partial response setelah stream error:',
+                saveError,
+              );
+            }
+
+            let errorMessage =
+              'Terjadi kesalahan saat menghasilkan jawaban AI.';
+
+            let errorCode =
+              'AI_STREAM_ERROR';
+
+            if (
+              error instanceof
+              AIServiceError
+            ) {
+              errorMessage =
+                error.message;
+
+              errorCode =
+                error.code;
+            }
+
+            send(
+              'error',
+              {
+                message:
+                  errorMessage,
+
+                code:
+                  errorCode,
+              },
+            );
+
+            try {
+              controller.close();
+            } catch {}
+          }
+        },
+      });
+
+    /* =====================================================
+       12. STREAM RESPONSE
+    ===================================================== */
+
+    return new Response(
+      stream,
+      {
+        status: 200,
+
+        headers: {
+          'Content-Type':
+            'text/event-stream; charset=utf-8',
+
+          'Cache-Control':
+            'no-cache, no-transform',
+
+          Connection:
+            'keep-alive',
+
+          'X-Accel-Buffering':
+            'no',
+        },
       },
-      200,
     );
   } catch (error) {
     /* =====================================================
@@ -876,11 +1082,6 @@ Jangan mengarang informasi yang tidak tersedia.
       '💥 ERROR PADA API CHAT:',
       error,
     );
-
-    /*
-     * Error yang sudah diklasifikasikan
-     * oleh lib/ai/gemini.ts
-     */
 
     if (
       error instanceof
@@ -895,6 +1096,27 @@ Jangan mengarang informasi yang tidak tersedia.
             error.code,
         },
         error.status,
+      );
+    }
+
+    /* =====================================================
+       ABORT BEFORE STREAM STARTED
+    ===================================================== */
+
+    if (
+      error instanceof Error &&
+      error.name ===
+        'AbortError'
+    ) {
+      return jsonResponse(
+        {
+          error:
+            'Request dibatalkan.',
+
+          code:
+            'REQUEST_ABORTED',
+        },
+        499,
       );
     }
 

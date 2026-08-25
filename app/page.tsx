@@ -101,6 +101,11 @@ function HomeContent() {
     useState(false);
 
   const [
+    hasReceivedFirstChunk,
+    setHasReceivedFirstChunk,
+  ] = useState(false);
+
+  const [
     currentSessionId,
     setCurrentSessionId,
   ] = useState<string | null>(null);
@@ -495,11 +500,8 @@ function HomeContent() {
     };
 
     /*
-     * Simpan snapshot messages sebelum
-     * menambahkan pesan user baru.
-     *
-     * Ini dipakai sebagai history yang
-     * dikirim ke API.
+     * Snapshot history sebelum pesan user baru
+     * dimasukkan ke state.
      */
     const historySnapshot =
       messages
@@ -520,6 +522,7 @@ function HomeContent() {
 
     setInput('');
     setIsLoading(true);
+    setHasReceivedFirstChunk(false);
 
     /* RESET TEXTAREA */
 
@@ -535,6 +538,28 @@ function HomeContent() {
 
     abortControllerRef.current =
       controller;
+
+    /*
+     * Bubble assistant dibuat ketika delta pertama tiba.
+     * ID tetap sama selama seluruh proses streaming.
+     */
+    const assistantMessageId =
+      `assistant-${Date.now()}`;
+
+    const assistantTime =
+      new Date().toLocaleTimeString(
+        'id-ID',
+        {
+          hour: '2-digit',
+          minute: '2-digit',
+        },
+      );
+
+    let assistantCreated =
+      false;
+
+    let pendingSources:
+      string[] = [];
 
     try {
       const response =
@@ -560,75 +585,330 @@ function HomeContent() {
           }),
         });
 
-      const data =
-        await response.json();
-
+      /*
+       * Error yang terjadi sebelum SSE dimulai
+       * masih dikembalikan backend sebagai JSON.
+       */
       if (!response.ok) {
+        const errorData =
+          await response
+            .json()
+            .catch(
+              () => null,
+            );
+
         throw new Error(
-          data.error ||
+          errorData?.error ||
             'Chat request gagal.',
         );
       }
 
-      if (data.sessionId) {
-        const newSessionId =
-          data.sessionId as string;
-
-        /*
-         * Simpan session aktif dan sinkronkan URL.
-         * Karena ref di-set sebelum router.replace,
-         * effect URL tidak akan fetch ulang chat yang
-         * baru saja dibuat.
-         */
-        loadedSessionRef.current =
-          newSessionId;
-
-        loadingSessionRef.current =
-          null;
-
-        setCurrentSessionId(
-          newSessionId,
-        );
-
-        router.replace(
-          `/?session=${encodeURIComponent(
-            newSessionId,
-          )}`,
-          {
-            scroll: false,
-          },
+      if (!response.body) {
+        throw new Error(
+          'Streaming response tidak tersedia.',
         );
       }
 
-      const newAIMessage: Message = {
-        id: `assistant-${Date.now()}`,
+      const reader =
+        response.body.getReader();
 
-        role: 'assistant',
+      const decoder =
+        new TextDecoder();
 
-        content:
-          data.answer,
+      let buffer = '';
 
-        sources:
-          data.sources || [],
+      while (true) {
+        const {
+          value,
+          done,
+        } = await reader.read();
 
-        time: new Date().toLocaleTimeString(
-          'id-ID',
-          {
-            hour: '2-digit',
-            minute: '2-digit',
-          },
-        ),
-      };
+        if (done) {
+          break;
+        }
 
-      setMessages((prev) => [
-        ...prev,
-        newAIMessage,
-      ]);
+        buffer +=
+          decoder.decode(
+            value,
+            {
+              stream: true,
+            },
+          );
+
+        /*
+         * Format SSE:
+         *
+         * event: delta
+         * data: {"text":"..."}
+         *
+         * <baris kosong>
+         */
+        const blocks =
+          buffer.split(
+            /\r?\n\r?\n/,
+          );
+
+        /*
+         * Potongan terakhir mungkin belum lengkap.
+         * Simpan untuk read() berikutnya.
+         */
+        buffer =
+          blocks.pop() || '';
+
+        for (
+          const block of blocks
+        ) {
+          if (!block.trim()) {
+            continue;
+          }
+
+          const lines =
+            block.split(
+              /\r?\n/,
+            );
+
+          let eventName = '';
+          let dataString = '';
+
+          for (
+            const line of lines
+          ) {
+            if (
+              line.startsWith(
+                'event:',
+              )
+            ) {
+              eventName =
+                line
+                  .slice(6)
+                  .trim();
+
+              continue;
+            }
+
+            if (
+              line.startsWith(
+                'data:',
+              )
+            ) {
+              dataString +=
+                line
+                  .slice(5)
+                  .trim();
+            }
+          }
+
+          if (!dataString) {
+            continue;
+          }
+
+          let data: any;
+
+          try {
+            data =
+              JSON.parse(
+                dataString,
+              );
+          } catch {
+            console.warn(
+              '[SSE] Data JSON tidak valid:',
+              dataString,
+            );
+
+            continue;
+          }
+
+          /* =============================================
+             META
+          ============================================= */
+
+          if (
+            eventName ===
+            'meta'
+          ) {
+            if (
+              data.sessionId
+            ) {
+              const newSessionId =
+                data.sessionId as string;
+
+              loadedSessionRef.current =
+                newSessionId;
+
+              loadingSessionRef.current =
+                null;
+
+              setCurrentSessionId(
+                newSessionId,
+              );
+
+              router.replace(
+                `/?session=${encodeURIComponent(
+                  newSessionId,
+                )}`,
+                {
+                  scroll: false,
+                },
+              );
+            }
+
+            if (
+              Array.isArray(
+                data.sources,
+              )
+            ) {
+              pendingSources =
+                data.sources;
+
+              /*
+               * Jika bubble AI sudah ada,
+               * sources dapat langsung di-update.
+               */
+              if (
+                assistantCreated
+              ) {
+                setMessages(
+                  (prev) =>
+                    prev.map(
+                      (msg) =>
+                        msg.id ===
+                        assistantMessageId
+                          ? {
+                              ...msg,
+
+                              sources:
+                                pendingSources,
+                            }
+                          : msg,
+                    ),
+                );
+              }
+            }
+
+            continue;
+          }
+
+          /* =============================================
+             DELTA
+          ============================================= */
+
+          if (
+            eventName ===
+            'delta'
+          ) {
+            const text =
+              typeof data.text ===
+              'string'
+                ? data.text
+                : '';
+
+            if (!text) {
+              continue;
+            }
+
+            setHasReceivedFirstChunk(
+              true,
+            );
+
+            /*
+             * Delta pertama:
+             * buat bubble assistant.
+             */
+            if (
+              !assistantCreated
+            ) {
+              assistantCreated =
+                true;
+
+              setMessages(
+                (prev) => [
+                  ...prev,
+
+                  {
+                    id:
+                      assistantMessageId,
+
+                    role:
+                      'assistant',
+
+                    content:
+                      text,
+
+                    sources:
+                      pendingSources,
+
+                    time:
+                      assistantTime,
+                  },
+                ],
+              );
+            }
+
+            /*
+             * Delta berikutnya:
+             * append ke bubble yang sama.
+             */
+            else {
+              setMessages(
+                (prev) =>
+                  prev.map(
+                    (msg) =>
+                      msg.id ===
+                      assistantMessageId
+                        ? {
+                            ...msg,
+
+                            content:
+                              msg.content +
+                              text,
+                          }
+                        : msg,
+                  ),
+              );
+            }
+
+            continue;
+          }
+
+          /* =============================================
+             STREAM ERROR
+          ============================================= */
+
+          if (
+            eventName ===
+            'error'
+          ) {
+            throw new Error(
+              data.message ||
+                'Streaming AI gagal.',
+            );
+          }
+
+          /* =============================================
+             DONE
+          ============================================= */
+
+          if (
+            eventName ===
+            'done'
+          ) {
+            console.info(
+              '[AI STREAM DONE]',
+              {
+                model:
+                  data.model,
+
+                modelUsed:
+                  data.modelUsed,
+              },
+            );
+          }
+        }
+      }
     } catch (error: any) {
       /*
-       * Kalau request sengaja dihentikan
-       * melalui tombol Stop, jangan tampilkan
-       * error message.
+       * User menekan Stop Generation.
+       * Partial response yang sudah tampil tetap dipertahankan.
        */
       if (
         error?.name ===
@@ -637,35 +917,55 @@ function HomeContent() {
         return;
       }
 
-      console.error(error);
+      console.error(
+        '[CHAT STREAM ERROR]',
+        error,
+      );
 
       setMessages((prev) => [
         ...prev,
 
         {
-          id: `error-${Date.now()}`,
+          id:
+            `error-${Date.now()}`,
 
-          role: 'assistant',
+          role:
+            'assistant',
 
           content:
+            error?.message ||
             'Maaf, terjadi masalah saat menghubungkan ke AI. Silakan coba kembali.',
 
-          isError: true,
+          isError:
+            true,
 
-          time: new Date().toLocaleTimeString(
-            'id-ID',
-            {
-              hour: '2-digit',
-              minute: '2-digit',
-            },
-          ),
+          time:
+            new Date().toLocaleTimeString(
+              'id-ID',
+              {
+                hour:
+                  '2-digit',
+
+                minute:
+                  '2-digit',
+              },
+            ),
         },
       ]);
     } finally {
       setIsLoading(false);
 
-      abortControllerRef.current =
-        null;
+      setHasReceivedFirstChunk(
+        false,
+      );
+
+      if (
+        abortControllerRef.current ===
+        controller
+      ) {
+        abortControllerRef.current =
+          null;
+      }
     }
   };
 
@@ -971,9 +1271,10 @@ function HomeContent() {
 
                     {/* TYPING */}
 
-                    {isLoading && (
-                      <TypingIndicator />
-                    )}
+                    {isLoading &&
+                      !hasReceivedFirstChunk && (
+                        <TypingIndicator />
+                      )}
 
                     <div
                       ref={
