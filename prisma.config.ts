@@ -2,12 +2,12 @@ import { defineConfig } from '@prisma/config';
 import 'dotenv/config';
 
 export default defineConfig({
-  // Prisma meminta blok datasource ini secara eksplisit untuk db push
+  // Gunakan DIRECT_URL agar Prisma memakai port 5432 untuk push skema
   datasource: {
-    url: process.env.DATABASE_URL,
+    url: process.env.DIRECT_URL, 
   },
-  // Kita biarkan blok migrate untuk berjaga-jaga
+  // Gunakan DIRECT_URL juga untuk keperluan migrasi
   migrate: {
-    connectionUrl: process.env.DATABASE_URL,
+    connectionUrl: process.env.DIRECT_URL,
   },
 });
