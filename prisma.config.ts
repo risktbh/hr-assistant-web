@@ -6,8 +6,4 @@ export default defineConfig({
   datasource: {
     url: process.env.DIRECT_URL, 
   },
-  // Gunakan DIRECT_URL juga untuk keperluan migrasi
-  migrate: {
-    connectionUrl: process.env.DIRECT_URL,
-  },
 });
