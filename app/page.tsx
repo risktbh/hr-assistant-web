@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -91,12 +92,11 @@ const suggestedPrompts = [
    PAGE
 ========================================================= */
 
-export default function Home() {
+function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const [input, setInput] = useState('');
-
   const [isLoading, setIsLoading] =
     useState(false);
 
@@ -139,6 +139,7 @@ export default function Home() {
   /* Session yang sedang dimuat */
   const loadingSessionRef =
     useRef<string | null>(null);
+  
 
   /* =======================================================
      WELCOME MESSAGE
@@ -1130,6 +1131,32 @@ export default function Home() {
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+/* =========================================================
+   PAGE WRAPPER
+========================================================= */
+
+export default function Home() {
+  return (
+    <Suspense fallback={<PageLoading />}>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function PageLoading() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-[#f7f8fc]">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-indigo-600" />
+
+        <p className="text-sm text-gray-500">
+          Memuat People Assistant...
+        </p>
+      </div>
     </div>
   );
 }
