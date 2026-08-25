@@ -12,7 +12,6 @@ import { z } from 'zod';
 import {
   HumanMessage,
   SystemMessage,
-  ToolMessage,
   AIMessage,
 } from '@langchain/core/messages';
 
@@ -724,38 +723,49 @@ Jangan mengarang informasi yang tidak tersedia.
       }
 
       /* ===================================================
-         10. BUILD TOOL FOLLOW-UP
+      /* ===================================================
+        FINAL ANSWER PROMPT
       =================================================== */
+
+      const finalSystemPrompt = `
+      Anda adalah "AI HR Assistant" yang cerdas, akurat, dan ramah.
+
+      Pada tahap ini proses pencarian data/tool SUDAH SELESAI.
+
+      INSTRUKSI PENTING:
+      - JANGAN memanggil tool atau function apa pun lagi.
+      - JANGAN meminta pencarian dokumen tambahan.
+      - Jawab langsung kepada pengguna dalam bentuk teks.
+      - Gunakan HASIL TOOL / CONTEXT yang diberikan sebagai dasar jawaban.
+      - Jangan mengarang informasi yang tidak tersedia.
+      - Jika informasi tidak ditemukan dalam context, katakan bahwa informasi tersebut tidak ditemukan.
+      - Gunakan Bahasa Indonesia yang jelas dan profesional.
+      - Susun jawaban dengan rapi menggunakan paragraf atau bullet point jika diperlukan.
+      `.trim();
 
       followUpMessages = [
         new SystemMessage(
-          systemPrompt,
+          finalSystemPrompt,
         ),
 
         ...formattedHistory,
 
         new HumanMessage(
-          cleanMessage,
+          `
+      PERTANYAAN PENGGUNA:
+
+      ${cleanMessage}
+
+
+      HASIL TOOL / CONTEXT:
+
+      ${String(toolResult)}
+
+
+      Berikan jawaban final langsung kepada pengguna.
+      Jangan melakukan function call atau tool call lagi.
+      `.trim(),
         ),
-
-        /*
-         * AI response yang berisi tool call.
-         */
-        aiResponse,
-
-        /*
-         * Hasil tool.
-         */
-        new ToolMessage({
-          tool_call_id:
-            toolCall.id ||
-            'default_tool_id',
-
-          content:
-            String(
-              toolResult,
-            ),
-        }),
       ];
     }
 
@@ -899,6 +909,20 @@ Jangan mengarang informasi yang tidak tersedia.
                 }
 
                 chunkCount++;
+
+                if (
+                  Array.isArray(
+                    chunk?.tool_calls,
+                  ) &&
+                  chunk.tool_calls.length > 0
+                ) {
+                  console.warn(
+                    '[AI FINAL RESPONSE] Unexpected tool call:',
+                    chunk.tool_calls,
+                  );
+
+                  continue;
+                }
 
                 let text = '';
 
