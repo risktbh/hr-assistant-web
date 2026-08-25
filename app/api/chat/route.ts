@@ -944,6 +944,25 @@ Jangan mengarang informasi yang tidak tersedia.
 
                     extractedText:
                       text,
+
+                    toolCalls:
+                      chunk?.tool_calls,
+
+                    toolCallChunks:
+                      chunk
+                        ?.tool_call_chunks,
+
+                    responseMetadata:
+                      chunk
+                        ?.response_metadata,
+
+                    additionalKwargs:
+                      chunk
+                        ?.additional_kwargs,
+
+                    usageMetadata:
+                      chunk
+                        ?.usage_metadata,
                   },
                 );
 
@@ -1034,12 +1053,136 @@ Jangan mengarang informasi yang tidak tersedia.
             /* ===============================================
                EMPTY RESPONSE FALLBACK
             =============================================== */
+            /* ===============================================
+              EMPTY STREAM RECOVERY
+            =============================================== */
+
+            if (
+              !finalAnswer.trim() &&
+              followUpMessages
+            ) {
+              console.warn(
+                '[AI STREAM EMPTY] Mencoba recovery generation...',
+                {
+                  sessionId:
+                    currentSessionId,
+
+                  model:
+                    usedModel,
+                },
+              );
+
+              try {
+                /*
+                * Streaming tadi selesai tetapi tidak
+                * menghasilkan text.
+                *
+                * Coba sekali lagi menggunakan invoke biasa.
+                */
+                const recoveryResult =
+                  await invokeGemini(
+                    followUpMessages,
+                    {
+                      stage:
+                        'tool-followup-recovery',
+
+                      signal:
+                        req.signal,
+                    },
+                  );
+
+                usedModel =
+                  recoveryResult.model;
+
+                usedModelType =
+                  recoveryResult.modelUsed;
+
+                const recoveryResponse =
+                  recoveryResult.response as AIMessage;
+
+                /*
+                * Coba .text terlebih dahulu,
+                * lalu fallback ke content.
+                */
+                let recoveryText = '';
+
+                if (
+                  typeof recoveryResponse?.text ===
+                    'string' &&
+                  recoveryResponse.text.trim()
+                ) {
+                  recoveryText =
+                    recoveryResponse.text;
+                }
+
+                else {
+                  recoveryText =
+                    extractText(
+                      recoveryResponse?.content,
+                    );
+                }
+
+                if (
+                  recoveryText.trim()
+                ) {
+                  finalAnswer =
+                    recoveryText.trim();
+
+                  console.info(
+                    '[AI STREAM RECOVERY SUCCESS]',
+                    {
+                      answerLength:
+                        finalAnswer.length,
+
+                      model:
+                        usedModel,
+
+                      modelUsed:
+                        usedModelType,
+                    },
+                  );
+
+                  send(
+                    'delta',
+                    {
+                      text:
+                        finalAnswer,
+                    },
+                  );
+                }
+              } catch (
+                recoveryError
+              ) {
+                console.error(
+                  '[AI STREAM RECOVERY FAILED]',
+                  recoveryError,
+                );
+              }
+            }
+
+            /* ===============================================
+              FINAL EMPTY FALLBACK
+            =============================================== */
 
             if (
               !finalAnswer.trim()
             ) {
+              console.error(
+                '[AI EMPTY RESPONSE]',
+                {
+                  sessionId:
+                    currentSessionId,
+
+                  model:
+                    usedModel,
+
+                  sources:
+                    extractedSources.length,
+                },
+              );
+
               finalAnswer =
-                'Maaf, format respons dari AI tidak dapat dibaca.';
+                'Maaf, AI tidak menghasilkan jawaban untuk pertanyaan tersebut. Silakan coba kembali.';
 
               send(
                 'delta',
