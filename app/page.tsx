@@ -40,13 +40,143 @@ import {
    TYPES
 ========================================================= */
 
+type OvertimeDraft = {
+  intent:
+    'CREATE_OVERTIME_REQUEST';
+
+  stage:
+    'DRAFT';
+
+  complete:
+    boolean;
+
+  timezone:
+    string;
+
+  data: {
+    startAt:
+      string | null;
+
+    endAt:
+      string | null;
+
+    reason:
+      string | null;
+
+    projectName:
+      string | null;
+
+    taskReference:
+      string | null;
+  };
+
+  missingFields:
+    string[];
+
+  validationErrors:
+    string[];
+};
+
+type OvertimePolicyValidation = {
+  policyFound:
+    boolean;
+
+  eligible:
+    boolean;
+
+  needsHumanReview:
+    boolean;
+
+  requiresManagerApproval:
+    boolean;
+
+  requiresSecondApproval:
+    boolean;
+
+  durationMinutes:
+    number;
+
+  violations:
+    string[];
+
+  warnings:
+    string[];
+
+  sourceFiles:
+    string[];
+
+  confidence:
+    number;
+};
+
+type OvertimeActionMeta = {
+  canConfirm:
+    boolean;
+
+  actionToken:
+    string | null;
+
+  draft:
+    OvertimeDraft;
+
+  policyValidation:
+    OvertimePolicyValidation |
+    null;
+};
+
+type OvertimeActionStatus =
+  | 'idle'
+  | 'submitting'
+  | 'success'
+  | 'error';
+
+type OvertimeResult = {
+  requestCode:
+    string;
+
+  status:
+    string;
+
+  manager?: {
+    id:
+      string;
+
+    name:
+      string;
+  } | null;
+};
+
 type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  sources?: string[];
-  time: string;
-  isError?: boolean;
+  id:
+    string;
+
+  role:
+    'user' |
+    'assistant';
+
+  content:
+    string;
+
+  sources?:
+    string[];
+
+  time:
+    string;
+
+  isError?:
+    boolean;
+
+  overtimeAction?:
+    OvertimeActionMeta;
+
+  overtimeActionStatus?:
+    OvertimeActionStatus;
+
+  overtimeResult?:
+    OvertimeResult;
+
+  overtimeActionError?:
+    string;
 };
 
 /* =========================================================
@@ -561,6 +691,10 @@ function HomeContent() {
     let pendingSources:
       string[] = [];
 
+    let pendingOvertimeAction:
+      OvertimeActionMeta |
+      undefined;
+
     try {
       const response =
         await fetch('/api/chat', {
@@ -760,10 +894,6 @@ function HomeContent() {
               pendingSources =
                 data.sources;
 
-              /*
-               * Jika bubble AI sudah ada,
-               * sources dapat langsung di-update.
-               */
               if (
                 assistantCreated
               ) {
@@ -785,9 +915,58 @@ function HomeContent() {
               }
             }
 
+            if (
+              data.pendingAction
+            ) {
+              pendingOvertimeAction = {
+                canConfirm:
+                  Boolean(
+                    data.canConfirm,
+                  ),
+
+                actionToken:
+                  typeof data.actionToken ===
+                  'string'
+                    ? data.actionToken
+                    : null,
+
+                draft:
+                  data.pendingAction as
+                    OvertimeDraft,
+
+                policyValidation:
+                  data.policyValidation
+                    ? data.policyValidation as
+                        OvertimePolicyValidation
+                    : null,
+              };
+
+              if (
+                assistantCreated
+              ) {
+                setMessages(
+                  (prev) =>
+                    prev.map(
+                      (msg) =>
+                        msg.id ===
+                        assistantMessageId
+                          ? {
+                              ...msg,
+
+                              overtimeAction:
+                                pendingOvertimeAction,
+
+                              overtimeActionStatus:
+                                'idle',
+                            }
+                          : msg,
+                    ),
+                );
+              }
+            }
+
             continue;
           }
-
           /* =============================================
              DELTA
           ============================================= */
@@ -837,9 +1016,17 @@ function HomeContent() {
                     sources:
                       pendingSources,
 
+                    overtimeAction:
+                      pendingOvertimeAction,
+
+                    overtimeActionStatus:
+                      pendingOvertimeAction
+                        ? 'idle'
+                        : undefined,
+
                     time:
                       assistantTime,
-                  },
+                  }
                 ],
               );
             }
@@ -1028,6 +1215,126 @@ function HomeContent() {
         null;
 
       setIsLoading(false);
+    };
+  /* =======================================================
+    CONFIRM OVERTIME
+  ======================================================= */
+
+  const handleConfirmOvertime =
+    async (
+      messageId:
+        string,
+
+      actionToken:
+        string,
+    ) => {
+      if (
+        !actionToken
+      ) {
+        return;
+      }
+
+      setMessages(
+        (prev) =>
+          prev.map(
+            (message) =>
+              message.id ===
+              messageId
+                ? {
+                    ...message,
+
+                    overtimeActionStatus:
+                      'submitting',
+
+                    overtimeActionError:
+                      undefined,
+                  }
+                : message,
+          ),
+      );
+
+      try {
+        const response =
+          await fetch(
+            '/api/overtime/confirm',
+            {
+              method:
+                'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+
+              body:
+                JSON.stringify(
+                  {
+                    actionToken,
+                  },
+                ),
+            },
+          );
+
+        const data =
+          await response
+            .json();
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            data?.error ||
+            'Gagal mengirim pengajuan lembur.',
+          );
+        }
+
+        setMessages(
+          (prev) =>
+            prev.map(
+              (message) =>
+                message.id ===
+                messageId
+                  ? {
+                      ...message,
+
+                      overtimeActionStatus:
+                        'success',
+
+                      overtimeResult:
+                        data.data,
+                    }
+                  : message,
+            ),
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          '[OVERTIME CONFIRM]',
+          error,
+        );
+
+        setMessages(
+          (prev) =>
+            prev.map(
+              (message) =>
+                message.id ===
+                messageId
+                  ? {
+                      ...message,
+
+                      overtimeActionStatus:
+                        'error',
+
+                      overtimeActionError:
+                        error instanceof Error
+                          ? error.message
+                          : 'Pengajuan lembur gagal.',
+                    }
+                  : message,
+            ),
+        );
+      }
     };
 
   /* =======================================================
@@ -1242,18 +1549,22 @@ function HomeContent() {
                               key={
                                 message.id
                               }
+
                               message={
                                 message
                               }
+
                               copied={
                                 copiedMessageId ===
                                 message.id
                               }
+
                               onCopy={() =>
                                 handleCopy(
                                   message,
                                 )
                               }
+
                               showRegenerate={
                                 message.role ===
                                   'assistant' &&
@@ -1261,14 +1572,30 @@ function HomeContent() {
                                   visibleMessages.length -
                                     1
                               }
+
                               onRegenerate={
                                 handleRegenerate
                               }
+
+                              onConfirmOvertime={() => {
+                                const actionToken =
+                                  message
+                                    .overtimeAction
+                                    ?.actionToken;
+
+                                if (
+                                  actionToken
+                                ) {
+                                  handleConfirmOvertime(
+                                    message.id,
+                                    actionToken,
+                                  );
+                                }
+                              }}
                             />
                           );
                         },
                       )}
-
                     {/* TYPING */}
 
                     {isLoading &&
@@ -1585,12 +1912,25 @@ function ChatMessage({
   onCopy,
   showRegenerate,
   onRegenerate,
+  onConfirmOvertime,
 }: {
-  message: Message;
-  copied: boolean;
-  onCopy: () => void;
-  showRegenerate: boolean;
-  onRegenerate: () => void;
+  message:
+    Message;
+
+  copied:
+    boolean;
+
+  onCopy:
+    () => void;
+
+  showRegenerate:
+    boolean;
+
+  onRegenerate:
+    () => void;
+
+  onConfirmOvertime:
+    () => void;
 }) {
   const isUser =
     message.role === 'user';
@@ -1706,6 +2046,36 @@ function ChatMessage({
             <ReactMarkdown>
               {message.content}
             </ReactMarkdown>
+            {!isUser &&
+              message
+                .overtimeAction && (
+                <OvertimeConfirmationCard
+                  action={
+                    message
+                      .overtimeAction
+                  }
+
+                  status={
+                    message
+                      .overtimeActionStatus ??
+                    'idle'
+                  }
+
+                  result={
+                    message
+                      .overtimeResult
+                  }
+
+                  error={
+                    message
+                      .overtimeActionError
+                  }
+
+                  onConfirm={
+                    onConfirmOvertime
+                  }
+                />
+              )}
           </div>
 
           {/* ================================================= */}
@@ -1818,6 +2188,398 @@ function ChatMessage({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+/* =========================================================
+   OVERTIME CONFIRMATION CARD
+========================================================= */
+
+function OvertimeConfirmationCard({
+  action,
+  status,
+  result,
+  error,
+  onConfirm,
+}: {
+  action:
+    OvertimeActionMeta;
+
+  status:
+    OvertimeActionStatus;
+
+  result?:
+    OvertimeResult;
+
+  error?:
+    string;
+
+  onConfirm:
+    () => void;
+}) {
+  const draft =
+    action.draft;
+
+  const policy =
+    action
+      .policyValidation;
+
+  const formatDateTime =
+    (
+      value:
+        string | null,
+    ) => {
+      if (!value) {
+        return '-';
+      }
+
+      const date =
+        new Date(
+          value,
+        );
+
+      if (
+        Number.isNaN(
+          date.getTime(),
+        )
+      ) {
+        return '-';
+      }
+
+      return new Intl
+        .DateTimeFormat(
+          'id-ID',
+          {
+            timeZone:
+              'Asia/Jakarta',
+
+            day:
+              '2-digit',
+
+            month:
+              'short',
+
+            year:
+              'numeric',
+
+            hour:
+              '2-digit',
+
+            minute:
+              '2-digit',
+          },
+        )
+        .format(
+          date,
+        );
+    };
+
+  /* =======================================================
+     SUCCESS
+  ======================================================= */
+
+  if (
+    status ===
+    'success'
+  ) {
+    return (
+      <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+
+        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+          <CheckCircle2
+            size={16}
+          />
+
+          Pengajuan berhasil dikirim
+        </div>
+
+        <div className="mt-3 grid gap-3 text-xs sm:grid-cols-3">
+
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-emerald-600">
+              Request Code
+            </p>
+
+            <p className="mt-1 font-semibold text-emerald-900">
+              {
+                result
+                  ?.requestCode ??
+                '-'
+              }
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-emerald-600">
+              Status
+            </p>
+
+            <p className="mt-1 font-semibold text-emerald-900">
+              {
+                result
+                  ?.status ??
+                'PENDING'
+              }
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-emerald-600">
+              Approver
+            </p>
+
+            <p className="mt-1 font-semibold text-emerald-900">
+              {
+                result
+                  ?.manager
+                  ?.name ??
+                '-'
+              }
+            </p>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40">
+
+      {/* HEADER */}
+
+      <div className="border-b border-indigo-100 bg-white/70 px-4 py-3">
+
+        <div className="flex items-center gap-2">
+
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+            <Clock3
+              size={15}
+            />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-900">
+              Overtime Request
+            </p>
+
+            <p className="text-[10px] text-gray-500">
+              Menunggu konfirmasi Anda
+            </p>
+          </div>
+
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4">
+
+        {/* DATE */}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Mulai
+            </p>
+
+            <p className="mt-1 text-xs font-medium text-gray-700">
+              {
+                formatDateTime(
+                  draft
+                    .data
+                    .startAt,
+                )
+              }
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Selesai
+            </p>
+
+            <p className="mt-1 text-xs font-medium text-gray-700">
+              {
+                formatDateTime(
+                  draft
+                    .data
+                    .endAt,
+                )
+              }
+            </p>
+          </div>
+
+        </div>
+
+        {/* DURATION */}
+
+        {policy && (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Durasi
+            </p>
+
+            <p className="mt-1 text-xs font-medium text-gray-700">
+              {
+                policy
+                  .durationMinutes
+              } menit
+            </p>
+          </div>
+        )}
+
+        {/* REASON */}
+
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+            Alasan
+          </p>
+
+          <p className="mt-1 text-xs font-medium text-gray-700">
+            {
+              draft
+                .data
+                .reason ??
+              '-'
+            }
+          </p>
+        </div>
+
+        {/* POLICY */}
+
+        {policy && (
+          <div className="rounded-xl border border-gray-200 bg-white p-3">
+
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Policy Check
+            </p>
+
+            <div className="mt-2 space-y-1.5 text-xs text-gray-600">
+
+              {policy
+                .policyFound && (
+                <p>
+                  ✓ Kebijakan ditemukan
+                </p>
+              )}
+
+              {policy
+                .eligible && (
+                <p>
+                  ✓ Memenuhi policy awal
+                </p>
+              )}
+
+              {policy
+                .requiresManagerApproval && (
+                <p>
+                  ✓ Manager approval diperlukan
+                </p>
+              )}
+
+              {policy
+                .requiresSecondApproval && (
+                <p>
+                  ✓ Second approval diperlukan
+                </p>
+              )}
+
+            </div>
+          </div>
+        )}
+
+        {/* WARNINGS */}
+
+        {policy &&
+          policy
+            .warnings
+            .length > 0 && (
+            <div className="rounded-xl border border-amber-100 bg-amber-50 p-3">
+
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                Perhatian
+              </p>
+
+              <div className="mt-1.5 space-y-1">
+
+                {policy
+                  .warnings
+                  .map(
+                    (
+                      warning,
+                      index,
+                    ) => (
+                      <p
+                        key={
+                          index
+                        }
+                        className="text-xs leading-5 text-amber-700"
+                      >
+                        {warning}
+                      </p>
+                    ),
+                  )}
+
+              </div>
+            </div>
+          )}
+
+        {/* ERROR */}
+
+        {error && (
+          <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">
+            {error}
+          </div>
+        )}
+
+        {/* CONFIRM */}
+
+        {action.canConfirm &&
+        action.actionToken ? (
+          <button
+            type="button"
+
+            onClick={
+              onConfirm
+            }
+
+            disabled={
+              status ===
+              'submitting'
+            }
+
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+
+            {status ===
+            'submitting' ? (
+              <>
+                <RefreshCw
+                  size={14}
+                  className="animate-spin"
+                />
+
+                Mengirim pengajuan...
+              </>
+            ) : (
+              <>
+                <Check
+                  size={14}
+                />
+
+                Konfirmasi Pengajuan
+              </>
+            )}
+
+          </button>
+        ) : (
+          <div className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs leading-5 text-amber-700">
+            Pengajuan belum dapat dikonfirmasi karena policy check belum memenuhi seluruh persyaratan.
+          </div>
+        )}
+
+      </div>
     </div>
   );
 }

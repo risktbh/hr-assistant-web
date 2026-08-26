@@ -1,11 +1,9 @@
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider   = "postgresql"
-  extensions = [vector]
+  provider = "postgresql"
 }
 
 // 1. Tabel Induk Baru (Untuk melacak file PDF)
@@ -20,15 +18,16 @@ model Document {
 
 // 2. Modifikasi Tabel Chunks Lama
 model DocumentChunk {
-  id        String                      @id @default(uuid())
+  id        String                       @id @default(uuid())
   content   String
   metadata  Json?
   embedding Unsupported("vector(3072)")?
-  createdAt DateTime                    @default(now())
+  createdAt DateTime                     @default(now())
 
-  // Kolom baru untuk menyambungkan ke Tabel Induk
   documentId String?
   document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
 }
 
 // Menyimpan informasi sesi obrolan (judul yang tampil di sidebar)
@@ -65,10 +64,176 @@ model Employee {
   location   String
   initial    String?
 
+  managerId String?
+
+  manager       Employee?  @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports Employee[] @relation("EmployeeManager")
+
+  overtimeRequests        OvertimeRequest[] @relation("EmployeeOvertime")
+  managedOvertimeRequests OvertimeRequest[] @relation("ManagerOvertime")
+
+  secondApprovalOvertimeRequests OvertimeRequest[] @relation("SecondApproverOvertime")
+
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())  @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@index([name])
   @@index([department])
   @@index([status])
+  @@index([managerId])
+}
+
+enum OvertimeStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum WorkflowStatus {
+  NOT_STARTED
+  TRIGGERED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model OvertimeRequest {
+  id          String @id @default(cuid())
+  requestCode String @unique
+
+  employeeId String
+  managerId  String?
+
+  employee Employee @relation("EmployeeOvertime", fields: [employeeId], references: [id], onDelete: Restrict)
+
+  manager Employee? @relation("ManagerOvertime", fields: [managerId], references: [id], onDelete: SetNull)
+
+  startAt DateTime @db.Timestamptz(3)
+  endAt   DateTime @db.Timestamptz(3)
+
+  timezone        String @default("Asia/Jakarta")
+  durationMinutes Int
+
+  reason        String
+  projectName   String?
+  taskReference String?
+
+  /**
+   * =======================================================
+   * OVERALL REQUEST STATUS
+   * =======================================================
+   */
+
+  status OvertimeStatus @default(PENDING)
+
+  /**
+   * =======================================================
+   * APPROVAL STATE MACHINE
+   * =======================================================
+   */
+
+  approvalStage OvertimeApprovalStage @default(MANAGER)
+
+  requiresSecondApproval Boolean @default(false)
+
+  /**
+   * MANAGER APPROVAL
+   */
+
+  managerDecision ApprovalDecision @default(PENDING)
+
+  managerDecisionNote String?
+
+  managerDecidedAt DateTime? @db.Timestamptz(3)
+
+  /**
+   * SECOND APPROVAL
+   */
+
+  secondApproverId String?
+
+  secondApprover Employee? @relation("SecondApproverOvertime", fields: [secondApproverId], references: [id], onDelete: SetNull)
+
+  secondDecision ApprovalDecision?
+
+  secondDecisionNote String?
+
+  secondDecidedAt DateTime? @db.Timestamptz(3)
+
+  /**
+   * =======================================================
+   * POLICY
+   * =======================================================
+   */
+
+  policyResult Json?
+
+  policySource String?
+
+  /**
+   * =======================================================
+   * FINAL DECISION
+   * =======================================================
+   */
+
+  decisionNote String?
+
+  decidedAt DateTime? @db.Timestamptz(3)
+
+  /**
+   * =======================================================
+   * AUTOMATION
+   * =======================================================
+   */
+
+  workflowRunId String?
+
+  workflowStatus WorkflowStatus @default(NOT_STARTED)
+
+  requestedAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([employeeId])
+  @@index([managerId])
+  @@index([secondApproverId])
+  @@index([status])
+  @@index([approvalStage])
+  @@index([workflowStatus])
+  @@index([startAt])
+  @@index([requestedAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  entityType String
+  entityId   String
+
+  action String
+
+  actorType String
+  actorId   String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OvertimeApprovalStage {
+  MANAGER
+  SECOND_APPROVER
+  COMPLETED
 }

@@ -1,6 +1,6 @@
-import { PrismaClient } from '@prisma/client';
-import { Pool } from 'pg';
-import { PrismaPg } from '@prisma/adapter-pg';
+import {
+  prisma,
+} from '@/lib/db/prisma';
 
 import {
   GoogleGenerativeAIEmbeddings,
@@ -21,30 +21,27 @@ import {
   streamGemini,
 } from '@/lib/ai/gemini';
 
+import {
+  getJakartaNowContext,
+  prepareOvertimeRequestTool,
+  type OvertimeDraftResult,
+} from '@/lib/ai/overtime-intent';
+
+import {
+  validateOvertimeDraftWithRag,
+  type OvertimePolicyValidation,
+} from '@/lib/ai/overtime-policy';
+
+import {
+  createOvertimeActionToken,
+} from '@/lib/security/overtime-action-token';
+
+
 /* =========================================================
    RUNTIME
 ========================================================= */
 
 export const runtime = 'nodejs';
-
-/* =========================================================
-   DATABASE
-========================================================= */
-
-const connectionString =
-  process.env.DATABASE_URL;
-
-const pool = new Pool({
-  connectionString,
-});
-
-const adapter =
-  new PrismaPg(pool);
-
-const prisma =
-  new PrismaClient({
-    adapter,
-  });
 
 /* =========================================================
    HELPERS
@@ -425,26 +422,101 @@ export async function POST(
     const tools = [
       cekSisaCutiTool,
       cariKebijakanHRTool,
+      prepareOvertimeRequestTool,
     ];
 
     /* =====================================================
        6. SYSTEM PROMPT
     ===================================================== */
+    const jakartaNow =
+      getJakartaNowContext();
 
     const systemPrompt = `
-Anda adalah "AI HR Assistant" yang cerdas, akurat, dan ramah.
+Anda adalah "AI HR Assistant" yang cerdas,
+akurat, dan ramah.
 
-Gunakan tools yang tersedia jika pertanyaan berkaitan dengan:
-- data personal karyawan seperti sisa cuti atau jabatan;
+WAKTU ACUAN SAAT INI:
+${jakartaNow}
+
+Gunakan tools berdasarkan intent pengguna.
+
+ATURAN ROUTING:
+
+1. DATA PERSONAL
+
+Jika pengguna bertanya data personal seperti
+sisa cuti atau jabatan mereka:
+
+→ gunakan cek_data_personal_karyawan
+
+
+2. PERTANYAAN KEBIJAKAN / KNOWLEDGE
+
+Jika pengguna hanya bertanya tentang:
 - aturan perusahaan;
 - kebijakan HR;
-- prosedur perusahaan;
-- informasi dari dokumen HR.
+- prosedur;
+- syarat overtime;
+- batas overtime;
+- kompensasi overtime;
+- cara pengajuan overtime secara umum;
 
-Jika pertanyaan hanya berupa sapaan atau percakapan umum,
-jawab langsung dengan ramah tanpa menggunakan tool.
+→ gunakan cari_dokumen_kebijakan_hr
 
-Jika informasi diperoleh dari tool atau dokumen,
+Contoh:
+"Apa aturan overtime?"
+"Bagaimana prosedur lembur?"
+"Berapa batas maksimal lembur?"
+
+
+3. INTENT MEMBUAT OVERTIME REQUEST
+
+Jika pengguna secara eksplisit ingin:
+- mengajukan lembur;
+- membuat overtime request;
+- meminta lembur;
+- menyiapkan pengajuan lembur;
+
+→ gunakan prepare_overtime_request
+
+Contoh:
+"Saya mau lembur besok jam 7 sampai 10 malam
+untuk deployment."
+
+"Tolong ajukan overtime malam ini."
+
+Untuk prepare_overtime_request:
+
+- ubah waktu relatif seperti "besok",
+  "hari ini", atau "malam ini" berdasarkan
+  WAKTU ACUAN SAAT INI;
+
+- gunakan timezone Asia/Jakarta UTC+07:00;
+
+- gunakan ISO-8601 untuk startAt dan endAt;
+
+- jangan mengarang data yang tidak diberikan;
+
+- jika jam, tanggal, atau alasan belum tersedia,
+  biarkan field tersebut kosong.
+
+
+PENTING:
+
+prepare_overtime_request hanya membuat DRAFT.
+
+JANGAN menganggap pengajuan sudah dikirim.
+JANGAN mengatakan request sudah dibuat.
+JANGAN membuat perubahan database.
+
+Pengajuan aktual baru boleh dilakukan setelah
+pengguna melakukan konfirmasi.
+
+
+Jika pertanyaan hanya berupa sapaan atau
+percakapan umum, jawab langsung dengan ramah.
+
+Jika informasi diperoleh dari dokumen,
 gunakan informasi tersebut sebagai dasar jawaban.
 
 Jangan mengarang informasi yang tidak tersedia.
@@ -541,6 +613,16 @@ Jangan mengarang informasi yang tidak tersedia.
     let extractedSources:
       string[] = [];
 
+    let pendingAction:
+      OvertimeDraftResult |
+      null =
+      null;
+
+    let policyValidation:
+      OvertimePolicyValidation |
+      null =
+      null;
+
     /* =====================================================
        9. TOOL EXECUTION
     ===================================================== */
@@ -589,8 +671,159 @@ Jangan mengarang informasi yang tidak tersedia.
           await cekSisaCutiTool.invoke(
             args,
           );
-      }
 
+        toolResult =
+          String(
+            toolResult,
+          );
+      }
+      /* ===================================================
+        OVERTIME INTENT / DRAFT
+      =================================================== */
+
+      else if (
+        toolCall.name ===
+        'prepare_overtime_request'
+      ) {
+        const rawResult =
+          await prepareOvertimeRequestTool.invoke(
+            toolCall.args as any,
+          );
+
+        toolResult =
+          String(
+            rawResult,
+          );
+
+        /* ===============================================
+          PARSE DRAFT
+        =============================================== */
+
+        try {
+          pendingAction =
+            JSON.parse(
+              toolResult,
+            ) as OvertimeDraftResult;
+        } catch (
+          parseError
+        ) {
+          console.error(
+            '[OVERTIME INTENT PARSE ERROR]',
+            parseError,
+          );
+
+          pendingAction =
+            null;
+        }
+
+        /* ===============================================
+          DRAFT BERHASIL
+        =============================================== */
+
+        if (
+          pendingAction
+        ) {
+          console.info(
+            '[OVERTIME INTENT]',
+            {
+              complete:
+                pendingAction.complete,
+
+              missingFields:
+                pendingAction
+                  .missingFields,
+
+              validationErrors:
+                pendingAction
+                  .validationErrors,
+
+              data:
+                pendingAction.data,
+            },
+          );
+
+          /* =============================================
+            POLICY VALIDATION
+          ============================================= */
+
+          if (
+            pendingAction.complete &&
+            pendingAction
+              .missingFields
+              .length === 0 &&
+            pendingAction
+              .validationErrors
+              .length === 0
+          ) {
+            try {
+              policyValidation =
+                await validateOvertimeDraftWithRag(
+                  {
+                    draft:
+                      pendingAction,
+
+                    originalQuestion:
+                      cleanMessage,
+
+                    signal:
+                      req.signal,
+                  },
+                );
+
+              extractedSources =
+                policyValidation
+                  .sourceFiles;
+            } catch (
+              policyError
+            ) {
+              console.error(
+                '[OVERTIME POLICY ERROR]',
+                policyError,
+              );
+
+              policyValidation =
+                null;
+
+              extractedSources =
+                [];
+            }
+          }
+
+          /* =============================================
+            FINAL TOOL CONTEXT
+          ============================================= */
+          const canConfirm =
+            Boolean(
+              pendingAction
+                ?.complete &&
+
+              policyValidation
+                ?.policyFound &&
+
+              policyValidation
+                ?.eligible &&
+
+              !policyValidation
+                ?.needsHumanReview &&
+
+              policyValidation
+                .violations
+                .length === 0
+            );
+
+          toolResult =
+            JSON.stringify(
+              {
+                draft:
+                  pendingAction,
+
+                policyValidation,
+
+                canConfirm,
+              },
+            );
+        }
+      }
       /* ===================================================
          RAG DATABASE
       =================================================== */
@@ -810,19 +1043,97 @@ Jangan mengarang informasi yang tidak tersedia.
       =================================================== */
 
       const finalSystemPrompt = `
-      Anda adalah "AI HR Assistant" yang cerdas, akurat, dan ramah.
+      Anda adalah "AI HR Assistant" yang cerdas,
+      akurat, dan ramah.
 
-      Pada tahap ini proses pencarian data/tool SUDAH SELESAI.
+      Pada tahap ini proses tool dan policy validation
+      SUDAH SELESAI.
 
-      INSTRUKSI PENTING:
-      - JANGAN memanggil tool atau function apa pun lagi.
-      - JANGAN meminta pencarian dokumen tambahan.
-      - Jawab langsung kepada pengguna dalam bentuk teks.
-      - Gunakan HASIL TOOL / CONTEXT yang diberikan sebagai dasar jawaban.
-      - Jangan mengarang informasi yang tidak tersedia.
-      - Jika informasi tidak ditemukan dalam context, katakan bahwa informasi tersebut tidak ditemukan.
-      - Gunakan Bahasa Indonesia yang jelas dan profesional.
-      - Susun jawaban dengan rapi menggunakan paragraf atau bullet point jika diperlukan.
+      JANGAN memanggil tool atau function lagi.
+
+      Gunakan HASIL TOOL / CONTEXT sebagai
+      satu-satunya sumber keputusan.
+
+      Jangan mengarang informasi.
+
+
+      KHUSUS OVERTIME:
+
+      HASIL TOOL dapat berisi:
+
+      {
+        "draft": {...},
+        "policyValidation": {...},
+        "canConfirm": true | false
+      }
+
+
+      ATURAN PRIORITAS:
+
+      1. Jika draft.complete = false:
+
+      - tanyakan hanya field yang masih kurang;
+      - jangan mengatakan request sudah dibuat;
+      - jangan meminta konfirmasi.
+
+
+      2. Jika draft.validationErrors tidak kosong:
+
+      - jelaskan kesalahan;
+      - minta pengguna memperbaikinya;
+      - jangan meminta konfirmasi.
+
+
+      3. Jika policyValidation = null:
+
+      - jelaskan policy belum dapat divalidasi;
+      - jangan meminta konfirmasi.
+
+
+      4. Jika policyValidation.eligible = false:
+
+      - jelaskan request belum dapat diajukan;
+      - jelaskan violations;
+      - tampilkan warning jika ada;
+      - jangan meminta konfirmasi.
+
+
+      5. Jika policyValidation.needsHumanReview = true:
+
+      - jelaskan request memerlukan review manusia;
+      - jelaskan alasannya berdasarkan warnings atau matchedRules;
+      - jangan mengatakan request sudah disetujui;
+      - JANGAN menawarkan pengiriman;
+      - JANGAN meminta konfirmasi.
+
+
+      6. HANYA jika canConfirm = true:
+
+      - rangkum tanggal dan waktu;
+      - tampilkan durasi;
+      - tampilkan alasan;
+      - tampilkan project/task jika tersedia;
+      - jelaskan policy validation berhasil;
+      - sebutkan manager approval jika diperlukan;
+      - sebutkan second approval jika diperlukan;
+      - tampilkan warning penting jika ada;
+      - jelaskan request BELUM dikirim;
+      - minta pengguna melakukan konfirmasi.
+
+
+      PENTING:
+
+      Jika canConfirm = false,
+      DILARANG meminta pengguna mengonfirmasi
+      atau menawarkan mengirim pengajuan.
+
+      Policy validation BUKAN approval manager.
+
+      Eligible berarti request dapat DIAJUKAN,
+      bukan berarti request sudah DISETUJUI.
+
+      Gunakan Bahasa Indonesia yang jelas,
+      ringkas, dan profesional.
       `.trim();
 
       followUpMessages = [
@@ -936,6 +1247,82 @@ Jangan mengarang informasi yang tidak tersedia.
                META
             =============================================== */
 
+            let canConfirm =
+              Boolean(
+                pendingAction
+                  ?.complete &&
+
+                policyValidation
+                  ?.policyFound &&
+
+                policyValidation
+                  ?.eligible &&
+
+                !policyValidation
+                  ?.needsHumanReview &&
+
+                policyValidation
+                  .violations
+                  .length === 0
+              );
+
+            let actionToken:
+              string | null =
+              null;
+
+            const employeeId =
+              process.env
+                .DEMO_EMPLOYEE_ID
+                ?.trim() ||
+              null;
+
+            /*
+            * Untuk sementara belum ada authentication.
+            * Karena itu actor diambil dari env demo.
+            */
+            if (
+              canConfirm &&
+              employeeId &&
+              currentSessionId &&
+              pendingAction &&
+              policyValidation
+            ) {
+              try {
+                actionToken =
+                  createOvertimeActionToken(
+                    {
+                      employeeId,
+
+                      sessionId:
+                        currentSessionId,
+
+                      draft:
+                        pendingAction,
+
+                      policyValidation,
+                    },
+                  );
+              } catch (
+                tokenError
+              ) {
+                console.error(
+                  '[OVERTIME ACTION TOKEN ERROR]',
+                  tokenError,
+                );
+
+                /*
+                * Fail closed.
+                * Kalau token gagal dibuat,
+                * UI tidak boleh bisa confirm.
+                */
+                canConfirm =
+                  false;
+
+                actionToken =
+                  null;
+              }
+            }
+
             send(
               'meta',
               {
@@ -944,9 +1331,16 @@ Jangan mengarang informasi yang tidak tersedia.
 
                 sources:
                   extractedSources,
+
+                pendingAction,
+
+                policyValidation,
+
+                canConfirm,
+
+                actionToken,
               },
             );
-
             /* ===============================================
                TOOL / RAG FINAL RESPONSE - REAL STREAM
             =============================================== */
