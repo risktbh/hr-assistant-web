@@ -1270,6 +1270,22 @@ export async function rejectOvertimeRequest(
                 OvertimeStatus
                   .REJECTED,
 
+              /*
+              * Manager sudah reject,
+              * jadi second approval tidak akan dijalankan.
+              */
+              secondApproverId:
+                null,
+
+              secondDecision:
+                null,
+
+              secondDecisionNote:
+                null,
+
+              secondDecidedAt:
+                null,
+
               decisionNote:
                 note,
 
