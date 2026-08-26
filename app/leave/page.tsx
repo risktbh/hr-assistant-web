@@ -1,6 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 import Sidebar from '@/app/components/Sidebar';
 
@@ -27,6 +32,9 @@ import {
   History,
   Timer,
   Plane,
+  RefreshCw,
+  Circle,
+  AlertCircle,
 } from 'lucide-react';
 
 /* =========================================================
@@ -53,6 +61,80 @@ type LeaveItem = {
   status: LeaveStatus;
   note: string;
   submittedAt: string;
+};
+
+type OvertimeStatus =
+  | 'DRAFT'
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+type ApprovalDecision =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | null;
+
+type OvertimeApprovalStage =
+  | 'MANAGER'
+  | 'SECOND_APPROVER'
+  | 'COMPLETED';
+
+type WorkflowStatus =
+  | 'NOT_STARTED'
+  | 'TRIGGERED'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED';
+
+type OvertimePerson = {
+  id: string;
+  name: string;
+  email?: string;
+  position?: string;
+  department?: string;
+};
+
+type OvertimeRequest = {
+  id: string;
+  requestCode: string;
+
+  employeeId: string;
+  managerId: string | null;
+
+  startAt: string;
+  endAt: string;
+  timezone: string;
+
+  durationMinutes: number;
+
+  reason: string;
+  projectName: string | null;
+  taskReference: string | null;
+
+  status: OvertimeStatus;
+  approvalStage: OvertimeApprovalStage;
+
+  requiresSecondApproval: boolean;
+
+  managerDecision: ApprovalDecision;
+  managerDecisionNote: string | null;
+  managerDecidedAt: string | null;
+
+  secondApproverId: string | null;
+  secondDecision: ApprovalDecision;
+  secondDecisionNote: string | null;
+  secondDecidedAt: string | null;
+
+  workflowStatus: WorkflowStatus;
+
+  requestedAt: string;
+  createdAt: string;
+  updatedAt: string;
+
+  manager?: OvertimePerson | null;
+  secondApprover?: OvertimePerson | null;
 };
 
 /* =========================================================
@@ -111,6 +193,133 @@ const leaveHistory: LeaveItem[] = [
 ========================================================= */
 
 export default function TimeAndLeave() {
+  const [activeTab, setActiveTab] =
+    useState<'LEAVE' | 'OVERTIME'>('LEAVE');
+
+  const [overtimeRequests, setOvertimeRequests] =
+    useState<OvertimeRequest[]>([]);
+
+  const [overtimeLoading, setOvertimeLoading] =
+    useState(false);
+
+  const [overtimeRefreshing, setOvertimeRefreshing] =
+    useState(false);
+
+  const [overtimeError, setOvertimeError] =
+    useState<string | null>(null);
+  const loadOvertimeRequests =
+    useCallback(
+      async (
+        silent = false,
+      ) => {
+        try {
+          if (silent) {
+            setOvertimeRefreshing(
+              true,
+            );
+          } else {
+            setOvertimeLoading(
+              true,
+            );
+          }
+
+          setOvertimeError(
+            null,
+          );
+
+          const response =
+            await fetch(
+              '/api/overtime?employeeId=emp_003&limit=20',
+              {
+                method:
+                  'GET',
+
+                cache:
+                  'no-store',
+              },
+            );
+
+          const payload =
+            await response.json();
+
+          if (
+            !response.ok
+          ) {
+            throw new Error(
+              payload?.error ||
+                'Gagal mengambil data overtime.',
+            );
+          }
+
+          const data =
+            Array.isArray(
+              payload?.data,
+            )
+              ? payload.data
+              : Array.isArray(
+                    payload,
+                  )
+                ? payload
+                : [];
+
+          setOvertimeRequests(
+            data,
+          );
+        } catch (
+          error
+        ) {
+          console.error(
+            '[OVERTIME LOAD ERROR]',
+            error,
+          );
+
+          setOvertimeError(
+            error instanceof
+              Error
+              ? error.message
+              : 'Gagal mengambil data overtime.',
+          );
+        } finally {
+          setOvertimeLoading(
+            false,
+          );
+
+          setOvertimeRefreshing(
+            false,
+          );
+        }
+      },
+      [],
+    );
+  useEffect(() => {
+    if (
+      activeTab !==
+      'OVERTIME'
+    ) {
+      return;
+    }
+
+    void loadOvertimeRequests();
+
+    const interval =
+      window.setInterval(
+        () => {
+          void loadOvertimeRequests(
+            true,
+          );
+        },
+        10000,
+      );
+
+    return () => {
+      window.clearInterval(
+        interval,
+      );
+    };
+  }, [
+    activeTab,
+    loadOvertimeRequests,
+  ]);
   const [historyFilter, setHistoryFilter] =
     useState<'ALL' | LeaveStatus>('ALL');
 
@@ -181,7 +390,73 @@ export default function TimeAndLeave() {
         {/* ================================================= */}
 
         <div className="mx-auto w-full max-w-7xl space-y-7 p-6 pb-20 lg:p-8">
+          <section className="flex items-center justify-between">
+            <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() =>
+                  setActiveTab(
+                    'LEAVE',
+                  )
+                }
+                className={`rounded-xl px-5 py-2.5 text-sm font-semibold transition ${
+                  activeTab ===
+                  'LEAVE'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-500 hover:text-indigo-600'
+                }`}
+              >
+                Leave
+              </button>
 
+              <button
+                type="button"
+                onClick={() =>
+                  setActiveTab(
+                    'OVERTIME',
+                  )
+                }
+                className={`rounded-xl px-5 py-2.5 text-sm font-semibold transition ${
+                  activeTab ===
+                  'OVERTIME'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-gray-500 hover:text-indigo-600'
+                }`}
+              >
+                Overtime
+              </button>
+            </div>
+
+            {activeTab ===
+              'OVERTIME' && (
+              <button
+                type="button"
+                onClick={() =>
+                  void loadOvertimeRequests(
+                    true,
+                  )
+                }
+                disabled={
+                  overtimeRefreshing
+                }
+                className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-600 transition hover:border-indigo-200 hover:text-indigo-600 disabled:opacity-60"
+              >
+                <RefreshCw
+                  size={14}
+                  className={
+                    overtimeRefreshing
+                      ? 'animate-spin'
+                      : ''
+                  }
+                />
+
+                Refresh
+              </button>
+            )}
+          </section>
+
+          {activeTab === 'LEAVE' && (
+            <>
           {/* ================================================= */}
           {/* HERO */}
           {/* ================================================= */}
@@ -580,8 +855,18 @@ export default function TimeAndLeave() {
               </div>
             </div>
           </section>
-        </div>
-      </main>
+        </>
+      )}
+
+      {activeTab === 'OVERTIME' && (
+        <OvertimePanel
+          requests={overtimeRequests}
+          loading={overtimeLoading}
+          error={overtimeError}
+        />
+      )}
+    </div>
+  </main>
 
       {/* ================================================= */}
       {/* LEAVE MODAL */}
@@ -594,6 +879,637 @@ export default function TimeAndLeave() {
       )}
     </div>
   );
+}
+
+function OvertimePanel({
+  requests,
+  loading,
+  error,
+}: {
+  requests: OvertimeRequest[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const stats =
+    useMemo(() => {
+      return {
+        total:
+          requests.length,
+
+        pending:
+          requests.filter(
+            (request) =>
+              request.status ===
+              'PENDING',
+          ).length,
+
+        approved:
+          requests.filter(
+            (request) =>
+              request.status ===
+              'APPROVED',
+          ).length,
+
+        rejected:
+          requests.filter(
+            (request) =>
+              request.status ===
+              'REJECTED',
+          ).length,
+      };
+    }, [
+      requests,
+    ]);
+
+  return (
+    <>
+      {/* HERO */}
+
+      <section className="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-[#171443] via-indigo-800 to-violet-700 px-7 py-8 text-white shadow-xl shadow-indigo-950/10 lg:px-9 lg:py-9">
+        <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+
+        <div className="relative z-10">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-indigo-100 backdrop-blur">
+            <Timer
+              size={14}
+            />
+
+            Overtime Tracking
+          </div>
+
+          <h1 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
+            Pantau pengajuan
+            lembur Anda.
+          </h1>
+
+          <p className="mt-3 max-w-xl text-sm leading-6 text-indigo-100/70">
+            Lihat proses
+            approval,
+            keputusan manager,
+            second approval,
+            dan status akhir
+            overtime dari satu
+            tempat.
+          </p>
+        </div>
+      </section>
+
+      {/* SUMMARY */}
+
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <OvertimeSummaryCard
+          label="Total"
+          value={
+            stats.total
+          }
+          icon={
+            CalendarClock
+          }
+          style="bg-indigo-50 text-indigo-600"
+        />
+
+        <OvertimeSummaryCard
+          label="Menunggu"
+          value={
+            stats.pending
+          }
+          icon={Clock3}
+          style="bg-amber-50 text-amber-600"
+        />
+
+        <OvertimeSummaryCard
+          label="Disetujui"
+          value={
+            stats.approved
+          }
+          icon={
+            CheckCircle2
+          }
+          style="bg-emerald-50 text-emerald-600"
+        />
+
+        <OvertimeSummaryCard
+          label="Ditolak"
+          value={
+            stats.rejected
+          }
+          icon={
+            XCircle
+          }
+          style="bg-rose-50 text-rose-600"
+        />
+      </section>
+
+      {/* REQUEST LIST */}
+
+      <section>
+        <div className="mb-5">
+          <h3 className="text-lg font-bold text-gray-950">
+            Overtime Requests
+          </h3>
+
+          <p className="mt-1 text-sm text-gray-400">
+            Status approval
+            pengajuan lembur
+            terbaru Anda.
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="flex min-h-56 items-center justify-center rounded-[26px] border border-gray-200 bg-white">
+            <div className="flex items-center gap-3 text-sm text-gray-500">
+              <RefreshCw
+                size={17}
+                className="animate-spin text-indigo-500"
+              />
+
+              Memuat overtime...
+            </div>
+          </div>
+        ) : error ? (
+          <div className="rounded-[26px] border border-rose-100 bg-rose-50 p-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle
+                size={20}
+                className="mt-0.5 text-rose-500"
+              />
+
+              <div>
+                <p className="text-sm font-bold text-rose-700">
+                  Gagal memuat
+                  overtime
+                </p>
+
+                <p className="mt-1 text-xs text-rose-600">
+                  {error}
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : requests.length ===
+          0 ? (
+          <div className="rounded-[26px] border border-gray-200 bg-white px-6 py-14 text-center">
+            <Timer
+              size={32}
+              className="mx-auto text-gray-300"
+            />
+
+            <p className="mt-3 text-sm font-semibold text-gray-700">
+              Belum ada
+              pengajuan overtime
+            </p>
+
+            <p className="mt-1 text-xs text-gray-400">
+              Pengajuan overtime
+              dari People
+              Assistant akan
+              muncul di sini.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {requests.map(
+              (
+                request,
+              ) => (
+                <OvertimeRequestCard
+                  key={
+                    request.id
+                  }
+                  request={
+                    request
+                  }
+                />
+              ),
+            )}
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function OvertimeSummaryCard({
+  label,
+  value,
+  icon: Icon,
+  style,
+}: {
+  label: string;
+  value: number;
+  icon: any;
+  style: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm">
+      <div
+        className={`flex h-10 w-10 items-center justify-center rounded-xl ${style}`}
+      >
+        <Icon size={18} />
+      </div>
+
+      <p className="mt-4 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+        {label}
+      </p>
+
+      <p className="mt-1 text-xl font-bold text-gray-950">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function OvertimeRequestCard({
+  request,
+}: {
+  request: OvertimeRequest;
+}) {
+  const progress =
+    getOvertimeProgress(
+      request,
+    );
+
+  return (
+    <article className="overflow-hidden rounded-[26px] border border-gray-200/80 bg-white shadow-sm transition hover:border-indigo-100 hover:shadow-md">
+      <div className="flex flex-col justify-between gap-4 border-b border-gray-100 px-6 py-5 sm:flex-row sm:items-center">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="font-bold text-gray-950">
+              {
+                request.requestCode
+              }
+            </h4>
+
+            <OvertimeStatusBadge
+              status={
+                request.status
+              }
+            />
+          </div>
+
+          <p className="mt-2 text-sm font-medium text-gray-700">
+            {request.reason}
+          </p>
+
+          <p className="mt-1 text-xs text-gray-400">
+            {formatOvertimeDate(
+              request.startAt,
+            )}
+            {' • '}
+            {
+              request.durationMinutes
+            }{' '}
+            menit
+          </p>
+        </div>
+
+        <div className="text-left sm:text-right">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+            Current Stage
+          </p>
+
+          <p className="mt-1 text-sm font-bold text-gray-800">
+            {
+              progress.label
+            }
+          </p>
+        </div>
+      </div>
+
+      <div className="px-6 py-6">
+        <OvertimeTimeline
+          request={
+            request
+          }
+        />
+      </div>
+
+      {progress.note && (
+        <div className="border-t border-gray-100 bg-gray-50/60 px-6 py-4">
+          <p className="text-xs leading-5 text-gray-500">
+            {
+              progress.note
+            }
+          </p>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function OvertimeTimeline({
+  request,
+}: {
+  request: OvertimeRequest;
+}) {
+  const managerRejected =
+    request.managerDecision ===
+    'REJECTED';
+
+  const managerApproved =
+    request.managerDecision ===
+    'APPROVED';
+
+  const secondRejected =
+    request.secondDecision ===
+    'REJECTED';
+
+  const secondApproved =
+    request.secondDecision ===
+    'APPROVED';
+
+  return (
+    <div className="space-y-0">
+      <TimelineStep
+        state="done"
+        title="Request submitted"
+        description="Pengajuan overtime berhasil dibuat."
+      />
+
+      <TimelineStep
+        state={
+          managerRejected
+            ? 'rejected'
+            : managerApproved
+              ? 'done'
+              : 'current'
+        }
+        title={
+          request.manager
+            ?.name
+            ? `${request.manager.name} · Line Manager`
+            : 'Line Manager Approval'
+        }
+        description={
+          managerRejected
+            ? request.managerDecisionNote ||
+              'Pengajuan ditolak oleh manager.'
+            : managerApproved
+              ? 'Line Manager telah menyetujui pengajuan.'
+              : 'Menunggu keputusan Line Manager.'
+        }
+      />
+
+      {request.requiresSecondApproval && (
+        <TimelineStep
+          state={
+            managerRejected
+              ? 'disabled'
+              : secondRejected
+                ? 'rejected'
+                : secondApproved
+                  ? 'done'
+                  : request.approvalStage ===
+                      'SECOND_APPROVER'
+                    ? 'current'
+                    : 'disabled'
+          }
+          title={
+            request.secondApprover
+              ?.name
+              ? `${request.secondApprover.name} · Second Approver`
+              : 'Second Approval'
+          }
+          description={
+            managerRejected
+              ? 'Tidak diperlukan karena manager menolak pengajuan.'
+              : secondRejected
+                ? request.secondDecisionNote ||
+                  'Second approver menolak pengajuan.'
+                : secondApproved
+                  ? 'Second approver telah menyetujui pengajuan.'
+                  : request.approvalStage ===
+                      'SECOND_APPROVER'
+                    ? 'Menunggu second approval.'
+                    : 'Menunggu manager approval terlebih dahulu.'
+          }
+        />
+      )}
+
+      <TimelineStep
+        last
+        state={
+          request.status ===
+          'APPROVED'
+            ? 'done'
+            : request.status ===
+                'REJECTED'
+              ? 'rejected'
+              : 'disabled'
+        }
+        title="Final Decision"
+        description={
+          request.status ===
+          'APPROVED'
+            ? 'Pengajuan overtime telah disetujui.'
+            : request.status ===
+                'REJECTED'
+              ? 'Pengajuan overtime telah ditolak.'
+              : 'Menunggu seluruh approval selesai.'
+        }
+      />
+    </div>
+  );
+}
+
+function TimelineStep({
+  state,
+  title,
+  description,
+  last = false,
+}: {
+  state:
+    | 'done'
+    | 'current'
+    | 'rejected'
+    | 'disabled';
+
+  title: string;
+  description: string;
+  last?: boolean;
+}) {
+  const icon =
+    state === 'done' ? (
+      <CheckCircle2 size={17} />
+    ) : state === 'rejected' ? (
+      <XCircle size={17} />
+    ) : state === 'current' ? (
+      <Clock3 size={17} />
+    ) : (
+      <Circle size={17} />
+    );
+
+  const style =
+    state === 'done'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+      : state === 'rejected'
+        ? 'border-rose-200 bg-rose-50 text-rose-600'
+        : state === 'current'
+          ? 'border-amber-200 bg-amber-50 text-amber-600'
+          : 'border-gray-200 bg-gray-50 text-gray-300';
+
+  return (
+    <div className="relative flex gap-4">
+      <div className="relative flex flex-col items-center">
+        <div
+          className={`relative z-10 flex h-9 w-9 items-center justify-center rounded-full border ${style}`}
+        >
+          {icon}
+        </div>
+
+        {!last && (
+          <div className="min-h-12 w-px flex-1 bg-gray-200" />
+        )}
+      </div>
+
+      <div
+        className={
+          last
+            ? 'pb-0 pt-1'
+            : 'pb-6 pt-1'
+        }
+      >
+        <p className="text-sm font-bold text-gray-800">
+          {title}
+        </p>
+
+        <p className="mt-1 text-xs leading-5 text-gray-400">
+          {description}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function getOvertimeProgress(
+  request: OvertimeRequest,
+) {
+  if (
+    request.status ===
+      'REJECTED' &&
+    request.managerDecision ===
+      'REJECTED'
+  ) {
+    return {
+      label:
+        'Rejected by Manager',
+
+      note:
+        request.managerDecisionNote ||
+        'Pengajuan ditolak oleh Line Manager.',
+    };
+  }
+
+  if (
+    request.status ===
+      'REJECTED' &&
+    request.secondDecision ===
+      'REJECTED'
+  ) {
+    return {
+      label:
+        'Rejected by Second Approver',
+
+      note:
+        request.secondDecisionNote ||
+        'Pengajuan ditolak pada second approval.',
+    };
+  }
+
+  if (
+    request.status ===
+      'APPROVED' &&
+    request.approvalStage ===
+      'COMPLETED'
+  ) {
+    return {
+      label:
+        'Fully Approved',
+
+      note:
+        'Seluruh proses approval telah selesai.',
+    };
+  }
+
+  if (
+    request.approvalStage ===
+    'SECOND_APPROVER'
+  ) {
+    return {
+      label:
+        'Waiting Second Approval',
+
+      note:
+        'Line Manager telah menyetujui. Menunggu keputusan second approver.',
+    };
+  }
+
+  return {
+    label:
+      'Waiting Manager Approval',
+
+    note:
+      'Pengajuan sedang menunggu keputusan Line Manager.',
+  };
+}
+
+function OvertimeStatusBadge({
+  status,
+}: {
+  status: OvertimeStatus;
+}) {
+  const map: Record<
+    OvertimeStatus,
+    string
+  > = {
+    APPROVED:
+      'border-emerald-100 bg-emerald-50 text-emerald-700',
+
+    PENDING:
+      'border-amber-100 bg-amber-50 text-amber-700',
+
+    REJECTED:
+      'border-rose-100 bg-rose-50 text-rose-700',
+
+    CANCELLED:
+      'border-gray-200 bg-gray-50 text-gray-500',
+
+    DRAFT:
+      'border-gray-200 bg-gray-50 text-gray-500',
+  };
+
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${map[status]}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function formatOvertimeDate(
+  value: string,
+) {
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return '-';
+  }
+
+  return new Intl.DateTimeFormat(
+    'id-ID',
+    {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone:
+        'Asia/Jakarta',
+    },
+  ).format(date);
 }
 
 /* =========================================================

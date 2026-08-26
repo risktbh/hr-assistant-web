@@ -14,8 +14,7 @@ export type SecondApproverResolution = {
   secondApproverId:
     string;
 
-  source:
-    'MANAGER_MANAGER';
+  source: 'MANAGER_MANAGER' | 'CONFIGURED_ENV';
 
   employee: {
     id:
@@ -179,20 +178,83 @@ export async function resolveSecondApprover(
    * Manager dari line manager dianggap
    * Department Head / second approver.
    */
-  const secondApprover =
+  const hierarchySecondApprover =
     request
       .manager
       .manager;
+
+  let secondApprover =
+    hierarchySecondApprover;
+
+  let resolutionSource:
+    SecondApproverResolution['source'] =
+      'MANAGER_MANAGER';
+
+  /*
+   * =====================================================
+   * CONFIGURED FALLBACK
+   * =====================================================
+   */
+
+  if (!secondApprover) {
+    const configuredSecondApproverId =
+      process
+        .env
+        .DEMO_SECOND_APPROVER_ID
+        ?.trim();
+
+    if (
+      configuredSecondApproverId
+    ) {
+      const configuredSecondApprover =
+        await prisma.employee.findUnique({
+          where: {
+            id:
+              configuredSecondApproverId,
+          },
+
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            position: true,
+            department: true,
+          },
+        });
+
+      if (
+        configuredSecondApprover
+      ) {
+        secondApprover =
+          configuredSecondApprover;
+
+        resolutionSource =
+          'CONFIGURED_ENV';
+      }
+    }
+  }
+
+  /*
+   * =====================================================
+   * SECOND APPROVER REQUIRED
+   * =====================================================
+   */
 
   if (
     !secondApprover
   ) {
     throw new OvertimeServiceError(
       'SECOND_APPROVER_NOT_FOUND',
-      'Second approver tidak dapat ditentukan dari hierarchy organisasi.',
+      'Second approver tidak dapat ditentukan dari hierarchy organisasi maupun konfigurasi environment.',
       422,
     );
   }
+
+  /*
+   * =====================================================
+   * SEPARATION OF DUTIES
+   * =====================================================
+   */
 
   if (
     secondApprover.id ===
@@ -212,7 +274,7 @@ export async function resolveSecondApprover(
       secondApprover.id,
 
     source:
-      'MANAGER_MANAGER',
+      resolutionSource,
 
     employee: {
       id:
