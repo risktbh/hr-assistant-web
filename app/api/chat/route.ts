@@ -626,33 +626,116 @@ Jangan mengarang informasi yang tidak tersedia.
             ',',
           )}]`;
 
-        const relevantChunks:
-          any[] =
+        type RetrievedChunk = {
+          content: string;
+          metadata: any;
+          similarity: number;
+        };
+
+        const candidateChunks:
+          RetrievedChunk[] =
           await prisma.$queryRaw`
             SELECT
               content,
-              metadata
+              metadata,
+
+              1 - (
+                embedding <=>
+                ${vectorString}::vector
+              ) AS similarity
+
             FROM "DocumentChunk"
-            WHERE embedding IS NOT NULL
+
+            WHERE
+              embedding IS NOT NULL
+
             ORDER BY
               embedding <=>
               ${vectorString}::vector
-            LIMIT 4;
+
+            LIMIT 8;
           `;
+          /* =========================================
+          DEBUG RETRIEVAL
+        ========================================= */
+
+        console.log(
+          '[RAG RETRIEVAL]',
+          candidateChunks.map(
+            (
+              chunk,
+              index,
+            ) => ({
+              rank:
+                index + 1,
+
+              similarity:
+                Number(
+                  chunk.similarity,
+                ).toFixed(4),
+
+              source:
+                chunk
+                  ?.metadata
+                  ?.source,
+
+              preview:
+                chunk.content
+                  ?.slice(
+                    0,
+                    100,
+                  ),
+            }),
+          ),
+        );
+
+        /* =========================================
+          SIMILARITY FILTER
+        ========================================= */
+
+        const SIMILARITY_THRESHOLD =
+          0.60;
+
+        const relevantChunks =
+          candidateChunks
+            .filter(
+              (chunk) =>
+                Number(
+                  chunk.similarity,
+                ) >=
+                SIMILARITY_THRESHOLD,
+            )
+            .slice(
+              0,
+              4,
+            );
+
+        console.log(
+          '[RAG FILTER]',
+          {
+            threshold:
+              SIMILARITY_THRESHOLD,
+
+            candidates:
+              candidateChunks.length,
+
+            accepted:
+              relevantChunks.length,
+          },
+        );
+
+        /* =========================================
+          BUILD CONTEXT
+        ========================================= */
 
         if (
-          Array.isArray(
-            relevantChunks,
-          ) &&
           relevantChunks.length >
-            0
+          0
         ) {
           toolResult =
             relevantChunks
               .map(
-                (
-                  chunk: any,
-                ) =>
+                (chunk) =>
                   chunk.content,
               )
               .filter(Boolean)
@@ -663,9 +746,7 @@ Jangan mengarang informasi yang tidak tersedia.
           const sourceNames =
             relevantChunks
               .map(
-                (
-                  chunk: any,
-                ) => {
+                (chunk) => {
                   const rawSource =
                     chunk
                       ?.metadata
@@ -704,7 +785,9 @@ Jangan mengarang informasi yang tidak tersedia.
           ];
         } else {
           toolResult =
-            'Informasi tidak ditemukan di dokumen.';
+            'Informasi yang cukup relevan tidak ditemukan di knowledge base.';
+
+          extractedSources = [];
         }
       }
 
@@ -722,7 +805,6 @@ Jangan mengarang informasi yang tidak tersedia.
           'Tool yang diminta tidak tersedia.';
       }
 
-      /* ===================================================
       /* ===================================================
         FINAL ANSWER PROMPT
       =================================================== */
@@ -829,26 +911,24 @@ Jangan mengarang informasi yang tidak tersedia.
                 return;
               }
 
+              await prisma.chatMessage.create({
+                data: {
+                  sessionId:
+                    currentSessionId,
+
+                  role:
+                    'assistant',
+
+                  content:
+                    finalAnswer,
+
+                  sources:
+                    extractedSources,
+                },
+              });
+
               assistantSaved =
                 true;
-
-              await prisma.chatMessage.create(
-                {
-                  data: {
-                    sessionId:
-                      currentSessionId,
-
-                    role:
-                      'assistant',
-
-                    content:
-                      finalAnswer,
-
-                    sources:
-                      extractedSources,
-                  },
-                },
-              );
             };
 
           try {
@@ -869,9 +949,6 @@ Jangan mengarang informasi yang tidak tersedia.
 
             /* ===============================================
                TOOL / RAG FINAL RESPONSE - REAL STREAM
-            =============================================== */
-            /* ===============================================
-              TOOL / RAG FINAL RESPONSE - REAL STREAM
             =============================================== */
 
             if (
@@ -1076,9 +1153,6 @@ Jangan mengarang informasi yang tidak tersedia.
 
             /* ===============================================
                EMPTY RESPONSE FALLBACK
-            =============================================== */
-            /* ===============================================
-              EMPTY STREAM RECOVERY
             =============================================== */
 
             if (
