@@ -74,6 +74,11 @@ model Employee {
 
   secondApprovalOvertimeRequests OvertimeRequest[] @relation("SecondApproverOvertime")
 
+  leaveRequests        LeaveRequest[] @relation("EmployeeLeave")
+  managedLeaveRequests LeaveRequest[] @relation("ManagerLeave")
+
+  leaveBalances LeaveBalance[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -89,6 +94,21 @@ enum OvertimeStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+enum LeaveStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  SPECIAL
+  UNPAID
 }
 
 enum WorkflowStatus {
@@ -236,4 +256,125 @@ enum OvertimeApprovalStage {
   MANAGER
   SECOND_APPROVER
   COMPLETED
+}
+
+model LeaveRequest {
+  id          String @id @default(cuid())
+  requestCode String @unique
+
+  /**
+   * =======================================================
+   * EMPLOYEE + APPROVER
+   * =======================================================
+   */
+
+  employeeId String
+  managerId  String?
+
+  employee Employee  @relation("EmployeeLeave", fields: [employeeId], references: [id], onDelete: Restrict)
+  manager  Employee? @relation("ManagerLeave", fields: [managerId], references: [id], onDelete: SetNull)
+
+  /**
+   * =======================================================
+   * LEAVE DETAILS
+   * =======================================================
+   */
+
+  leaveType LeaveType
+
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+
+  totalDays Int
+
+  reason String?
+
+  /**
+   * =======================================================
+   * REQUEST STATUS
+   * =======================================================
+   */
+
+  status LeaveStatus @default(PENDING)
+
+  /**
+   * =======================================================
+   * MANAGER APPROVAL
+   * =======================================================
+   */
+
+  managerDecision ApprovalDecision @default(PENDING)
+
+  managerDecisionNote String?
+
+  managerDecidedAt DateTime? @db.Timestamptz(3)
+
+  /**
+   * =======================================================
+   * POLICY
+   * =======================================================
+   */
+
+  policyResult Json?
+
+  policySource String?
+
+  /**
+   * =======================================================
+   * AUTOMATION / N8N
+   * =======================================================
+   */
+
+  workflowStatus WorkflowStatus @default(NOT_STARTED)
+
+  workflowRunId String?
+
+  /**
+   * =======================================================
+   * TIMESTAMPS
+   * =======================================================
+   */
+
+  requestedAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  /**
+   * =======================================================
+   * INDEXES
+   * =======================================================
+   */
+
+  @@index([employeeId])
+  @@index([managerId])
+  @@index([status])
+  @@index([leaveType])
+  @@index([workflowStatus])
+  @@index([startDate])
+  @@index([requestedAt])
+  @@index([employeeId, status])
+  @@index([managerId, status])
+}
+
+model LeaveBalance {
+  id String @id @default(cuid())
+
+  employeeId String
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  year Int
+
+  leaveType LeaveType
+
+  entitlementDays Int @default(0)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([employeeId, year, leaveType])
+  @@index([employeeId])
+  @@index([year])
+  @@index([leaveType])
+  @@index([employeeId, year])
 }
