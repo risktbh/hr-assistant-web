@@ -79,6 +79,9 @@ model Employee {
 
   leaveBalances LeaveBalance[]
 
+  reimbursementRequests        ReimbursementRequest[] @relation("EmployeeReimbursement")
+  managedReimbursementRequests ReimbursementRequest[] @relation("ManagerReimbursement")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -377,4 +380,69 @@ model LeaveBalance {
   @@index([year])
   @@index([leaveType])
   @@index([employeeId, year])
+}
+
+enum ReimbursementType {
+  MEDICAL
+  TRAVEL
+  MEAL
+  OTHER
+}
+
+enum ReimbursementStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model ReimbursementRequest {
+  id          String @id @default(cuid())
+  requestCode String @unique
+
+  employeeId String
+  managerId  String?
+
+  employee Employee  @relation("EmployeeReimbursement", fields: [employeeId], references: [id], onDelete: Restrict)
+  manager  Employee? @relation("ManagerReimbursement", fields: [managerId], references: [id], onDelete: SetNull)
+
+  reimbursementType ReimbursementType
+
+  expenseDate DateTime @db.Date
+
+  amount   Decimal @db.Decimal(14, 2)
+  currency String  @default("IDR")
+
+  merchant String?
+  reason   String
+
+  receiptUrl      String?
+  receiptFileName String?
+
+  status ReimbursementStatus @default(PENDING)
+
+  managerDecision     ApprovalDecision @default(PENDING)
+  managerDecisionNote String?
+  managerDecidedAt    DateTime?        @db.Timestamptz(3)
+
+  policyResult Json?
+  policySource String?
+
+  workflowStatus WorkflowStatus @default(NOT_STARTED)
+  workflowRunId  String?
+
+  requestedAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([employeeId])
+  @@index([managerId])
+  @@index([status])
+  @@index([reimbursementType])
+  @@index([workflowStatus])
+  @@index([expenseDate])
+  @@index([requestedAt])
+  @@index([employeeId, status])
+  @@index([managerId, status])
 }
