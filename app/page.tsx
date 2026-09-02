@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import {
   Suspense,
@@ -108,6 +108,25 @@ type OvertimePolicyValidation = {
   confidence:
     number;
 };
+
+
+type ReimbursementActionMeta = {
+  canConfirm:
+    boolean;
+
+  actionToken:
+    string | null;
+
+  sessionId:
+    string | null;
+
+  draft:
+    any;
+
+  policyValidation:
+    any;
+};
+
 
 type OvertimeActionMeta = {
   canConfirm:
@@ -226,6 +245,35 @@ function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  /* 8H.4B — structured reimbursement confirmation */
+  const [
+    reimbursementAction,
+    setReimbursementAction,
+  ] = useState<ReimbursementActionMeta | null>(
+    null,
+  );
+
+  const [
+    reimbursementConfirming,
+    setReimbursementConfirming,
+  ] = useState(false);
+
+  const [
+    reimbursementConfirmError,
+    setReimbursementConfirmError,
+  ] = useState<string | null>(
+    null,
+  );
+
+  const [
+    reimbursementConfirmedCode,
+    setReimbursementConfirmedCode,
+  ] = useState<string | null>(
+    null,
+  );
+
+
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] =
     useState(false);
@@ -285,7 +333,7 @@ function HomeContent() {
       id: 'welcome-msg',
       role: 'assistant',
       content:
-        'Halo Riski! 👋 Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
+        'Halo Riski! ðŸ‘‹ Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
       time: new Date().toLocaleTimeString(
         'id-ID',
         {
@@ -303,7 +351,7 @@ function HomeContent() {
       id: 'welcome-msg',
       role: 'assistant',
       content:
-        'Halo Riski! 👋 Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
+        'Halo Riski! ðŸ‘‹ Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
       time: new Date().toLocaleTimeString(
         'id-ID',
         {
@@ -915,7 +963,60 @@ function HomeContent() {
               }
             }
 
-            if (
+            
+      const rawReimbursementAction =
+        data?.reimbursementAction;
+
+      if (
+        rawReimbursementAction &&
+        typeof rawReimbursementAction ===
+          'object'
+      ) {
+        setReimbursementAction({
+          canConfirm:
+            Boolean(
+              rawReimbursementAction
+                .canConfirm,
+            ),
+
+          actionToken:
+            typeof rawReimbursementAction
+              .actionToken ===
+            'string'
+              ? rawReimbursementAction
+                  .actionToken
+              : null,
+
+          sessionId:
+            typeof rawReimbursementAction
+              .sessionId ===
+            'string'
+              ? rawReimbursementAction
+                  .sessionId
+              : null,
+
+          draft:
+            rawReimbursementAction
+              .draft ??
+            null,
+
+          policyValidation:
+            rawReimbursementAction
+              .policyValidation ??
+            null,
+        });
+
+        setReimbursementConfirmedCode(
+          null,
+        );
+
+        setReimbursementConfirmError(
+          null,
+        );
+      }
+
+
+if (
               data.pendingAction
             ) {
               pendingOvertimeAction = {
@@ -1219,6 +1320,143 @@ function HomeContent() {
   /* =======================================================
     CONFIRM OVERTIME
   ======================================================= */
+
+
+  /* =======================================================
+     REIMBURSEMENT CONFIRMATION — 8H.4B
+  ======================================================= */
+
+  const handleConfirmReimbursement =
+    async (
+      action:
+        ReimbursementActionMeta,
+    ) => {
+      if (
+        reimbursementConfirming
+      ) {
+        return;
+      }
+
+      if (
+        !action
+          .canConfirm ||
+        !action
+          .actionToken ||
+        !action
+          .sessionId
+      ) {
+        setReimbursementConfirmError(
+          'Reimbursement ini belum dapat dikonfirmasi melalui standard workflow.',
+        );
+
+        return;
+      }
+
+      setReimbursementConfirming(
+        true,
+      );
+
+      setReimbursementConfirmError(
+        null,
+      );
+
+      try {
+        const response =
+          await fetch(
+            '/api/reimbursement/confirm',
+            {
+              method:
+                'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+
+              body:
+                JSON.stringify({
+                  token:
+                    action
+                      .actionToken,
+
+                  sessionId:
+                    action
+                      .sessionId,
+                }),
+            },
+          );
+
+        const payload =
+          await response
+            .json()
+            .catch(
+              () =>
+                null,
+            );
+
+        if (
+          !response.ok
+        ) {
+          const message =
+            payload
+              ?.error
+              ?.message ||
+            payload
+              ?.error ||
+            'Konfirmasi reimbursement gagal.';
+
+          throw new Error(
+            String(
+              message,
+            ),
+          );
+        }
+
+        const requestCode =
+          payload
+            ?.data
+            ?.request
+            ?.requestCode;
+
+        if (
+          typeof requestCode !==
+            'string' ||
+          !requestCode.trim()
+        ) {
+          throw new Error(
+            'Reimbursement berhasil diproses, tetapi request code tidak ditemukan pada response.',
+          );
+        }
+
+        setReimbursementConfirmedCode(
+          requestCode
+            .trim()
+            .toUpperCase(),
+        );
+
+        setReimbursementAction(
+          null,
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          '[REIMBURSEMENT CONFIRM UI ERROR]',
+          error,
+        );
+
+        setReimbursementConfirmError(
+          error instanceof Error
+            ? error.message
+            : 'Konfirmasi reimbursement gagal.',
+        );
+      } finally {
+        setReimbursementConfirming(
+          false,
+        );
+      }
+    };
+
 
   const handleConfirmOvertime =
     async (
@@ -1669,7 +1907,46 @@ function HomeContent() {
 
                 {/* INPUT FORM */}
 
-                <form
+                
+              {(reimbursementAction ||
+                reimbursementConfirmedCode) && (
+                <ReimbursementConfirmationPanel
+                  action={
+                    reimbursementAction
+                  }
+                  confirming={
+                    reimbursementConfirming
+                  }
+                  error={
+                    reimbursementConfirmError
+                  }
+                  confirmedCode={
+                    reimbursementConfirmedCode
+                  }
+                  onConfirm={() => {
+                    if (
+                      reimbursementAction
+                    ) {
+                      void handleConfirmReimbursement(
+                        reimbursementAction,
+                      );
+                    }
+                  }}
+                  onDismiss={() => {
+                    setReimbursementAction(
+                      null,
+                    );
+                    setReimbursementConfirmedCode(
+                      null,
+                    );
+                    setReimbursementConfirmError(
+                      null,
+                    );
+                  }}
+                />
+              )}
+
+<form
                   onSubmit={
                     handleSubmit
                   }
@@ -1712,7 +1989,7 @@ function HomeContent() {
                     <div className="flex items-center gap-2">
 
                       <span className="hidden text-[10px] text-gray-300 sm:block">
-                        Enter kirim • Shift+Enter baris baru
+                        Enter kirim â€¢ Shift+Enter baris baru
                       </span>
 
                       {/* STOP / SEND */}
@@ -1906,6 +2183,415 @@ function WelcomeState({
    CHAT MESSAGE
 ========================================================= */
 
+function extractReimbursementRequestCodeForLink(
+  content: string,
+) {
+  const match =
+    content.match(
+      /\bRB-\d{8}-[A-Z0-9]{6}\b/i,
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const normalized =
+    content.toLowerCase();
+
+  const transactionalSignals = [
+    'berhasil',
+    'dibuat',
+    'diajukan',
+    'status',
+    'pending',
+    'approved',
+    'rejected',
+    'disetujui',
+    'ditolak',
+    'workflow',
+    'menunggu persetujuan',
+  ];
+
+  const draftOnly =
+    normalized.includes(
+      'draft',
+    ) &&
+    normalized.includes(
+      'konfirmasi',
+    ) &&
+    !normalized.includes(
+      'berhasil',
+    );
+
+  if (
+    draftOnly ||
+    !transactionalSignals.some(
+      (signal) =>
+        normalized.includes(
+          signal,
+        ),
+    )
+  ) {
+    return null;
+  }
+
+  return match[0].toUpperCase();
+}
+
+function ReimbursementConfirmationPanel({
+  action,
+  confirming,
+  error,
+  confirmedCode,
+  onConfirm,
+  onDismiss,
+}: {
+  action:
+    ReimbursementActionMeta |
+    null;
+
+  confirming:
+    boolean;
+
+  error:
+    string | null;
+
+  confirmedCode:
+    string | null;
+
+  onConfirm:
+    () => void;
+
+  onDismiss:
+    () => void;
+}) {
+  const data =
+    action
+      ?.draft
+      ?.data ??
+    null;
+
+  const policy =
+    action
+      ?.policyValidation ??
+    null;
+
+  const formatMoney =
+    (
+      raw:
+        unknown,
+      currency =
+        'IDR',
+    ) => {
+      const amount =
+        Number(
+          raw,
+        );
+
+      if (
+        !Number.isFinite(
+          amount,
+        )
+      ) {
+        return String(
+          raw ??
+            '-',
+        );
+      }
+
+      try {
+        return new Intl.NumberFormat(
+          'id-ID',
+          {
+            style:
+              'currency',
+
+            currency,
+
+            maximumFractionDigits:
+              0,
+          },
+        ).format(
+          amount,
+        );
+      } catch {
+        return `${currency} ${amount.toLocaleString(
+          'id-ID',
+        )}`;
+      }
+    };
+
+  if (
+    confirmedCode
+  ) {
+    return (
+      <div className="mx-4 mb-3 rounded-2xl border border-emerald-200 bg-emerald-50/90 p-4 shadow-sm lg:mx-6">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+            <CheckCircle2
+              size={18}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-emerald-900">
+              Reimbursement berhasil diajukan
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-emerald-700">
+              Request code{' '}
+              <span className="font-semibold">
+                {confirmedCode}
+              </span>{' '}
+              sudah dibuat. Kamu bisa memantau
+              approval dan workflow secara live.
+            </p>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a
+                href={`/reimbursement?request=${encodeURIComponent(
+                  confirmedCode,
+                )}&from=ai`}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-emerald-800"
+              >
+                <WalletCards
+                  size={14}
+                />
+                Lihat klaim {confirmedCode}
+              </a>
+
+              <button
+                type="button"
+                onClick={
+                  onDismiss
+                }
+                className="rounded-xl border border-emerald-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    !action
+  ) {
+    return null;
+  }
+
+  const warnings =
+    Array.isArray(
+      policy
+        ?.warnings,
+    )
+      ? policy
+          .warnings
+          .slice(
+            0,
+            2,
+          )
+      : [];
+
+  return (
+    <div className="mx-4 mb-3 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm lg:mx-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+          <WalletCards
+            size={18}
+          />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-gray-900">
+                Konfirmasi reimbursement
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-gray-500">
+                Review detail hasil AI dan policy
+                sebelum request benar-benar dibuat.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={
+                onDismiss
+              }
+              aria-label="Tutup konfirmasi reimbursement"
+              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+            >
+              <XCircle
+                size={16}
+              />
+            </button>
+          </div>
+
+          {data && (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl bg-gray-50 px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  Jenis
+                </p>
+                <p className="mt-1 text-xs font-semibold text-gray-800">
+                  {data
+                    .reimbursementType ??
+                    '-'}
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-gray-50 px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  Nominal
+                </p>
+                <p className="mt-1 text-xs font-semibold text-gray-800">
+                  {formatMoney(
+                    data.amount,
+                    data.currency ??
+                      'IDR',
+                  )}
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-gray-50 px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  Tanggal transaksi
+                </p>
+                <p className="mt-1 text-xs font-semibold text-gray-800">
+                  {data
+                    .expenseDate ??
+                    '-'}
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-gray-50 px-3 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  Merchant
+                </p>
+                <p className="mt-1 truncate text-xs font-semibold text-gray-800">
+                  {data
+                    .merchant ??
+                    'Tidak disebutkan'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {data
+            ?.reason && (
+            <div className="mt-2 rounded-xl bg-gray-50 px-3 py-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                Alasan
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-gray-700">
+                {data.reason}
+              </p>
+            </div>
+          )}
+
+          {warnings.length >
+            0 && (
+            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+              {warnings.map(
+                (
+                  warning:
+                    string,
+                  index:
+                    number,
+                ) => (
+                  <p
+                    key={
+                      `${index}-${warning}`
+                    }
+                    className="text-xs leading-5 text-amber-800"
+                  >
+                    {warning}
+                  </p>
+                ),
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs leading-5 text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {action.canConfirm &&
+            action.actionToken &&
+            action.sessionId ? (
+              <button
+                type="button"
+                onClick={
+                  onConfirm
+                }
+                disabled={
+                  confirming
+                }
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {confirming ? (
+                  <>
+                    <RefreshCw
+                      size={14}
+                      className="animate-spin"
+                    />
+                    Mengirim...
+                  </>
+                ) : (
+                  <>
+                    <Check
+                      size={14}
+                    />
+                    Konfirmasi & Ajukan
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-medium text-amber-800">
+                Standard submission tidak tersedia.
+                Ikuti arahan review pada jawaban AI.
+              </div>
+            )}
+
+            {policy
+              ?.sourceFiles &&
+            Array.isArray(
+              policy
+                .sourceFiles,
+            ) &&
+            policy
+              .sourceFiles
+              .length >
+              0 && (
+              <span className="text-[10px] text-gray-400">
+                Policy:{' '}
+                {policy
+                  .sourceFiles
+                  .slice(
+                    0,
+                    2,
+                  )
+                  .join(
+                    ', ',
+                  )}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function ChatMessage({
   message,
   copied,
@@ -1934,6 +2620,13 @@ function ChatMessage({
 }) {
   const isUser =
     message.role === 'user';
+
+  const reimbursementRequestCode =
+    !isUser
+      ? extractReimbursementRequestCodeForLink(
+          message.content,
+        )
+      : null;
 
   return (
     <div
@@ -2117,6 +2810,29 @@ function ChatMessage({
         </div>
 
         {/* ================================================= */}
+        {!isUser &&
+          reimbursementRequestCode && (
+            <a
+              data-reimbursement-claim-link
+              href={`/reimbursement?request=${encodeURIComponent(
+                reimbursementRequestCode,
+              )}&from=ai`}
+              className="mt-2 inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 text-xs font-semibold text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100"
+            >
+              <WalletCards
+                size={14}
+              />
+
+              Lihat klaim {reimbursementRequestCode}
+
+              <span
+                aria-hidden="true"
+                className="text-indigo-400"
+              >
+                â†’
+              </span>
+            </a>
+          )}
         {/* AI ACTIONS */}
         {/* ================================================= */}
 
@@ -2460,28 +3176,28 @@ function OvertimeConfirmationCard({
               {policy
                 .policyFound && (
                 <p>
-                  ✓ Kebijakan ditemukan
+                  âœ“ Kebijakan ditemukan
                 </p>
               )}
 
               {policy
                 .eligible && (
                 <p>
-                  ✓ Memenuhi policy awal
+                  âœ“ Memenuhi policy awal
                 </p>
               )}
 
               {policy
                 .requiresManagerApproval && (
                 <p>
-                  ✓ Manager approval diperlukan
+                  âœ“ Manager approval diperlukan
                 </p>
               )}
 
               {policy
                 .requiresSecondApproval && (
                 <p>
-                  ✓ Second approval diperlukan
+                  âœ“ Second approval diperlukan
                 </p>
               )}
 
@@ -2708,3 +3424,4 @@ function TypingIndicator() {
     </div>
   );
 }
+

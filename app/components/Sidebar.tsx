@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import {
   useCallback,
@@ -21,6 +21,7 @@ import {
   Database,
   Users,
   Clock,
+  WalletCards,
   Plus,
   Trash2,
   Search,
@@ -83,6 +84,11 @@ const navigationItems = [
     href: '/leave',
     label: 'Time & Leave',
     icon: Clock,
+  },
+  {
+    href: '/reimbursement',
+    label: 'Expenses & Claims',
+    icon: WalletCards,
   },
 ];
 

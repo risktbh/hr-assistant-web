@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import {
   useCallback,
@@ -6,6 +6,8 @@ import {
   useMemo,
   useState,
 } from 'react';
+
+import Link from 'next/link';
 
 import Sidebar from '@/app/components/Sidebar';
 
@@ -19,6 +21,7 @@ import {
   XCircle,
   ChevronRight,
   FileText,
+  WalletCards,
   Sparkles,
   CalendarCheck,
   Umbrella,
@@ -44,23 +47,127 @@ import {
 type LeaveStatus =
   | 'Approved'
   | 'Pending'
-  | 'Rejected';
+  | 'Rejected'
+  | 'Cancelled';
 
 type LeaveType =
   | 'Cuti Tahunan'
   | 'Cuti Sakit'
-  | 'Cuti Khusus';
+  | 'Cuti Khusus'
+  | 'Cuti Tanpa Bayar';
 
-type LeaveItem = {
-  id: number;
-  type: LeaveType;
+type ApiLeaveStatus =
+  | 'DRAFT'
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+type ApiLeaveType =
+  | 'ANNUAL'
+  | 'SICK'
+  | 'SPECIAL'
+  | 'UNPAID';
+
+type LeavePerson = {
+  id: string;
+  name: string;
+  email?: string | null;
+  position?: string | null;
+  department?: string | null;
+};
+
+type LeaveRequest = {
+  id: string;
+  requestCode: string;
+
+  employeeId: string;
+  managerId: string | null;
+
+  leaveType: ApiLeaveType;
+
   startDate: string;
   endDate: string;
+  totalDays: number;
+
+  reason: string | null;
+
+  status: ApiLeaveStatus;
+
+  managerDecision:
+    | 'PENDING'
+    | 'APPROVED'
+    | 'REJECTED';
+
+  managerDecisionNote: string | null;
+  managerDecidedAt: string | null;
+
+  policySource: string | null;
+
+  workflowStatus: WorkflowStatus;
+  workflowRunId: string | null;
+
+  requestedAt: string;
+  createdAt: string;
+  updatedAt: string;
+
+  employee?: LeavePerson;
+  manager?: LeavePerson | null;
+};
+
+type LeaveItem = {
+  id: string;
+  requestCode: string;
+
+  type: LeaveType;
+
+  startDate: string;
+  endDate: string;
+
   dateLabel: string;
+
   days: number;
+
   status: LeaveStatus;
+
   note: string;
+
   submittedAt: string;
+
+  workflowStatus: WorkflowStatus;
+  workflowRunId: string | null;
+
+  managerName: string | null;
+  managerDecision:
+    | 'PENDING'
+    | 'APPROVED'
+    | 'REJECTED';
+  managerDecisionNote: string | null;
+  managerDecidedAt: string | null;
+
+  policySource: string | null;
+};
+
+type LeaveBalanceItem = {
+  leaveType: ApiLeaveType;
+
+  balanceConfigured: boolean;
+
+  entitlementDays: number | null;
+  approvedDays: number;
+  pendingDays: number;
+  availableDays: number | null;
+};
+
+type LeaveBalanceResponse = {
+  employee: {
+    id: string;
+    name: string;
+  };
+
+  year: number;
+
+  balances: LeaveBalanceItem[];
 };
 
 type OvertimeStatus =
@@ -137,56 +244,191 @@ type OvertimeRequest = {
   secondApprover?: OvertimePerson | null;
 };
 
-/* =========================================================
-   DUMMY DATA
-========================================================= */
+function mapLeaveStatus(
+  status: ApiLeaveStatus,
+): LeaveStatus {
+  switch (status) {
+    case 'APPROVED':
+      return 'Approved';
 
-const leaveHistory: LeaveItem[] = [
-  {
-    id: 1,
-    type: 'Cuti Tahunan',
-    startDate: '2026-08-12',
-    endDate: '2026-08-14',
-    dateLabel: '12 Agu - 14 Agu 2026',
-    days: 3,
-    status: 'Approved',
-    note: 'Liburan keluarga ke Bali',
-    submittedAt: '01 Agu 2026',
-  },
-  {
-    id: 2,
-    type: 'Cuti Sakit',
-    startDate: '2026-06-05',
-    endDate: '2026-06-05',
-    dateLabel: '05 Jun 2026',
-    days: 1,
-    status: 'Approved',
-    note: 'Demam tifoid (Surat dokter terlampir)',
-    submittedAt: '05 Jun 2026',
-  },
-  {
-    id: 3,
-    type: 'Cuti Tahunan',
-    startDate: '2026-09-20',
-    endDate: '2026-09-20',
-    dateLabel: '20 Sep 2026',
-    days: 1,
-    status: 'Pending',
-    note: 'Urus dokumen administrasi kelulusan kampus',
-    submittedAt: '22 Agu 2026',
-  },
-  {
-    id: 4,
-    type: 'Cuti Khusus',
-    startDate: '2026-04-17',
-    endDate: '2026-04-17',
-    dateLabel: '17 Apr 2026',
-    days: 1,
-    status: 'Rejected',
-    note: 'Keperluan pribadi',
-    submittedAt: '10 Apr 2026',
-  },
-];
+    case 'REJECTED':
+      return 'Rejected';
+
+    case 'CANCELLED':
+      return 'Cancelled';
+
+    case 'DRAFT':
+    case 'PENDING':
+    default:
+      return 'Pending';
+  }
+}
+
+function mapLeaveType(
+  type: ApiLeaveType,
+): LeaveType {
+  switch (type) {
+    case 'SICK':
+      return 'Cuti Sakit';
+
+    case 'SPECIAL':
+      return 'Cuti Khusus';
+
+    case 'UNPAID':
+      return 'Cuti Tanpa Bayar';
+
+    case 'ANNUAL':
+    default:
+      return 'Cuti Tahunan';
+  }
+}
+
+function formatLeaveDateOnly(
+  value: string,
+) {
+  const dateOnly =
+    value.slice(0, 10);
+
+  const date =
+    new Date(
+      `${dateOnly}T00:00:00Z`,
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return '-';
+  }
+
+  return new Intl.DateTimeFormat(
+    'id-ID',
+    {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    },
+  ).format(date);
+}
+
+function formatLeaveDateTime(
+  value: string | null,
+) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime(),
+    )
+  ) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat(
+    'id-ID',
+    {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'Asia/Jakarta',
+    },
+  ).format(date);
+}
+
+function formatLeaveDateRange(
+  startDate: string,
+  endDate: string,
+) {
+  const start =
+    formatLeaveDateOnly(
+      startDate,
+    );
+
+  const end =
+    formatLeaveDateOnly(
+      endDate,
+    );
+
+  if (
+    startDate.slice(0, 10) ===
+    endDate.slice(0, 10)
+  ) {
+    return start;
+  }
+
+  return `${start} - ${end}`;
+}
+
+function mapLeaveRequest(
+  request: LeaveRequest,
+): LeaveItem {
+  return {
+    id: request.id,
+
+    requestCode:
+      request.requestCode,
+
+    type: mapLeaveType(
+      request.leaveType,
+    ),
+
+    startDate:
+      request.startDate,
+
+    endDate:
+      request.endDate,
+
+    dateLabel:
+      formatLeaveDateRange(
+        request.startDate,
+        request.endDate,
+      ),
+
+    days:
+      request.totalDays,
+
+    status:
+      mapLeaveStatus(
+        request.status,
+      ),
+
+    note:
+      request.reason ||
+      'Tidak ada alasan.',
+
+    submittedAt:
+      formatLeaveDateOnly(
+        request.requestedAt,
+      ),
+
+    workflowStatus:
+      request.workflowStatus,
+
+    workflowRunId:
+      request.workflowRunId,
+
+    managerName:
+      request.manager?.name ??
+      null,
+
+    managerDecision:
+      request.managerDecision,
+
+    managerDecisionNote:
+      request.managerDecisionNote,
+
+    managerDecidedAt:
+      request.managerDecidedAt,
+
+    policySource:
+      request.policySource,
+  };
+}
 
 /* =========================================================
    MAIN
@@ -195,6 +437,31 @@ const leaveHistory: LeaveItem[] = [
 export default function TimeAndLeave() {
   const [activeTab, setActiveTab] =
     useState<'LEAVE' | 'OVERTIME'>('LEAVE');
+  const [leaveRequests, setLeaveRequests] =
+    useState<LeaveItem[]>([]);
+
+  const [leaveBalances, setLeaveBalances] =
+    useState<LeaveBalanceItem[]>([]);
+
+  const [leaveBalanceYear, setLeaveBalanceYear] =
+    useState(
+      new Date().getFullYear(),
+    );
+
+  const [leaveLoading, setLeaveLoading] =
+    useState(false);
+
+  const [leaveRefreshing, setLeaveRefreshing] =
+    useState(false);
+
+  const [leaveError, setLeaveError] =
+    useState<string | null>(null);
+
+  const [leaveRefreshError, setLeaveRefreshError] =
+    useState<string | null>(null);
+
+  const [leaveLastUpdated, setLeaveLastUpdated] =
+    useState<Date | null>(null);
 
   const [overtimeRequests, setOvertimeRequests] =
     useState<OvertimeRequest[]>([]);
@@ -207,6 +474,156 @@ export default function TimeAndLeave() {
 
   const [overtimeError, setOvertimeError] =
     useState<string | null>(null);
+  const loadLeaveData =
+    useCallback(
+      async (
+        silent = false,
+      ) => {
+        try {
+          if (silent) {
+            setLeaveRefreshing(
+              true,
+            );
+            setLeaveRefreshError(
+              null,
+            );
+          } else {
+            setLeaveLoading(
+              true,
+            );
+            setLeaveError(
+              null,
+            );
+          }
+
+          const year =
+            new Date().getFullYear();
+
+          const [
+            requestsResponse,
+            balanceResponse,
+          ] = await Promise.all([
+            fetch(
+              '/api/leave?limit=20',
+              {
+                method: 'GET',
+                cache: 'no-store',
+              },
+            ),
+
+            fetch(
+              `/api/leave?view=balance&year=${year}`,
+              {
+                method: 'GET',
+                cache: 'no-store',
+              },
+            ),
+          ]);
+
+          const [
+            requestsPayload,
+            balancePayload,
+          ] = await Promise.all([
+            requestsResponse.json(),
+            balanceResponse.json(),
+          ]);
+
+          if (
+            !requestsResponse.ok
+          ) {
+            throw new Error(
+              requestsPayload
+                ?.error?.message ||
+                requestsPayload
+                  ?.error ||
+                'Gagal mengambil pengajuan cuti.',
+            );
+          }
+
+          if (
+            !balanceResponse.ok
+          ) {
+            throw new Error(
+              balancePayload
+                ?.error?.message ||
+                balancePayload
+                  ?.error ||
+                'Gagal mengambil saldo cuti.',
+            );
+          }
+
+          const rawRequests:
+            LeaveRequest[] =
+            Array.isArray(
+              requestsPayload?.data,
+            )
+              ? requestsPayload.data
+              : [];
+
+          setLeaveRequests(
+            rawRequests.map(
+              mapLeaveRequest,
+            ),
+          );
+
+          const balanceData =
+            balancePayload?.data as
+              | LeaveBalanceResponse
+              | undefined;
+
+          setLeaveBalances(
+            Array.isArray(
+              balanceData?.balances,
+            )
+              ? balanceData.balances
+              : [],
+          );
+
+          if (
+            typeof balanceData?.year ===
+            'number'
+          ) {
+            setLeaveBalanceYear(
+              balanceData.year,
+            );
+          }
+
+          setLeaveError(
+            null,
+          );
+          setLeaveRefreshError(
+            null,
+          );
+          setLeaveLastUpdated(
+            new Date(),
+          );
+        } catch (error) {
+          console.error(
+            '[LEAVE LOAD ERROR]',
+            error,
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Gagal mengambil data cuti.';
+
+          if (silent) {
+            setLeaveRefreshError(
+              message,
+            );
+          } else {
+            setLeaveError(
+              message,
+            );
+          }
+        } finally {
+          setLeaveLoading(false);
+          setLeaveRefreshing(false);
+        }
+      },
+      [],
+    );
   const loadOvertimeRequests =
     useCallback(
       async (
@@ -293,6 +710,34 @@ export default function TimeAndLeave() {
     );
   useEffect(() => {
     if (
+      activeTab !== 'LEAVE'
+    ) {
+      return;
+    }
+
+    void loadLeaveData();
+
+    const interval =
+      window.setInterval(
+        () => {
+          void loadLeaveData(
+            true,
+          );
+        },
+        10000,
+      );
+
+    return () => {
+      window.clearInterval(
+        interval,
+      );
+    };
+  }, [
+    activeTab,
+    loadLeaveData,
+  ]);
+  useEffect(() => {
+    if (
       activeTab !==
       'OVERTIME'
     ) {
@@ -326,31 +771,120 @@ export default function TimeAndLeave() {
   const [showLeaveModal, setShowLeaveModal] =
     useState(false);
 
-  const filteredHistory = useMemo(() => {
-    if (historyFilter === 'ALL') {
-      return leaveHistory;
-    }
+  const filteredHistory =
+    useMemo(() => {
+      if (
+        historyFilter ===
+        'ALL'
+      ) {
+        return leaveRequests;
+      }
 
-    return leaveHistory.filter(
-      (item) => item.status === historyFilter,
-    );
-  }, [historyFilter]);
+      return leaveRequests.filter(
+        (item) =>
+          item.status ===
+          historyFilter,
+      );
+    }, [
+      historyFilter,
+      leaveRequests,
+    ]);
 
   const stats = useMemo(() => {
     return {
-      approved: leaveHistory.filter(
-        (item) => item.status === 'Approved',
-      ).length,
+      total:
+        leaveRequests.length,
 
-      pending: leaveHistory.filter(
-        (item) => item.status === 'Pending',
-      ).length,
+      approved:
+        leaveRequests.filter(
+          (item) =>
+            item.status ===
+            'Approved',
+        ).length,
 
-      rejected: leaveHistory.filter(
-        (item) => item.status === 'Rejected',
-      ).length,
+      pending:
+        leaveRequests.filter(
+          (item) =>
+            item.status ===
+            'Pending',
+        ).length,
+
+      rejected:
+        leaveRequests.filter(
+          (item) =>
+            item.status ===
+            'Rejected',
+        ).length,
     };
-  }, []);
+  }, [
+    leaveRequests,
+  ]);
+
+  const annualBalance =
+    useMemo(
+      () =>
+        leaveBalances.find(
+          (balance) =>
+            balance.leaveType ===
+            'ANNUAL',
+        ) ?? null,
+      [leaveBalances],
+    );
+
+  const sickBalance =
+    useMemo(
+      () =>
+        leaveBalances.find(
+          (balance) =>
+            balance.leaveType ===
+            'SICK',
+        ) ?? null,
+      [leaveBalances],
+    );
+
+  const specialBalance =
+    useMemo(
+      () =>
+        leaveBalances.find(
+          (balance) =>
+            balance.leaveType ===
+            'SPECIAL',
+        ) ?? null,
+      [leaveBalances],
+    );
+
+  const upcomingLeave =
+    useMemo(() => {
+      const today =
+        new Date()
+          .toISOString()
+          .slice(0, 10);
+
+      return (
+        leaveRequests
+          .filter(
+            (request) =>
+              (
+                request.status ===
+                  'Approved' ||
+                request.status ===
+                  'Pending'
+              ) &&
+              request.endDate.slice(
+                0,
+                10,
+              ) >= today,
+          )
+          .sort(
+            (a, b) =>
+              a.startDate.localeCompare(
+                b.startDate,
+              ),
+          )[0] ?? null
+      );
+    }, [
+      leaveRequests,
+    ]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f7f8fc] font-sans text-gray-800">
@@ -427,24 +961,49 @@ export default function TimeAndLeave() {
               </button>
             </div>
 
-            {activeTab ===
-              'OVERTIME' && (
+            <div className="flex items-center gap-3">
+              {activeTab === 'LEAVE' && (
+                <div className="hidden text-right sm:block">
+                  <p className="text-[11px] font-semibold text-gray-600">
+                    {leaveRefreshing
+                      ? 'Memperbarui data...'
+                      : leaveLastUpdated
+                        ? `Diperbarui ${formatLeaveLastUpdated(
+                            leaveLastUpdated,
+                          )}`
+                        : 'Belum disinkronkan'}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-gray-400">
+                    Auto refresh setiap 10 detik
+                  </p>
+                </div>
+              )}
+
               <button
                 type="button"
-                onClick={() =>
-                  void loadOvertimeRequests(
-                    true,
-                  )
-                }
+                onClick={() => {
+                  if (activeTab === 'LEAVE') {
+                    void loadLeaveData(true);
+                    return;
+                  }
+
+                  void loadOvertimeRequests(true);
+                }}
                 disabled={
-                  overtimeRefreshing
+                  activeTab === 'LEAVE'
+                    ? leaveRefreshing
+                    : overtimeRefreshing
                 }
                 className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-600 transition hover:border-indigo-200 hover:text-indigo-600 disabled:opacity-60"
               >
                 <RefreshCw
                   size={14}
                   className={
-                    overtimeRefreshing
+                    (
+                      activeTab === 'LEAVE'
+                        ? leaveRefreshing
+                        : overtimeRefreshing
+                    )
                       ? 'animate-spin'
                       : ''
                   }
@@ -452,8 +1011,40 @@ export default function TimeAndLeave() {
 
                 Refresh
               </button>
-            )}
+            </div>
           </section>
+
+          {activeTab === 'LEAVE' &&
+            leaveRefreshError &&
+            !leaveLoading && (
+              <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <AlertCircle
+                    size={18}
+                    className="mt-0.5 shrink-0 text-amber-600"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-amber-800">
+                      Refresh otomatis gagal
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-amber-700">
+                      Data terakhir tetap ditampilkan. {leaveRefreshError}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    void loadLeaveData(true)
+                  }
+                  disabled={leaveRefreshing}
+                  className="shrink-0 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-60"
+                >
+                  Coba lagi
+                </button>
+              </div>
+            )}
 
           {activeTab === 'LEAVE' && (
             <>
@@ -514,85 +1105,111 @@ export default function TimeAndLeave() {
                 </h3>
 
                 <p className="mt-1 text-sm text-gray-400">
-                  Periode Januari - Desember 2026
+                  Periode Januari - Desember {leaveBalanceYear}
                 </p>
               </div>
 
               <span className="hidden rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 sm:block">
-                Tahun 2026
+                Tahun {leaveBalanceYear}
               </span>
             </div>
 
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-              <LeaveBalanceCard
-                title="Cuti Tahunan"
-                subtitle="Annual Leave"
-                icon={Umbrella}
-                used={4}
-                total={12}
-                color="indigo"
-                desc="Berlaku hingga 31 Des 2026"
+            {leaveLoading ? (
+              <LeaveBalanceSkeleton />
+            ) : leaveError &&
+              leaveBalances.length === 0 ? (
+              <LeaveSectionError
+                title="Saldo cuti belum dapat dimuat"
+                message={leaveError}
+                onRetry={() =>
+                  void loadLeaveData()
+                }
               />
+            ) : (
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+                <LeaveBalanceCard
+                  title="Cuti Tahunan"
+                  subtitle="Annual Leave"
+                  icon={Umbrella}
+                  approved={annualBalance?.approvedDays ?? 0}
+                  pending={annualBalance?.pendingDays ?? 0}
+                  total={annualBalance?.entitlementDays ?? null}
+                  available={annualBalance?.availableDays ?? null}
+                  configured={annualBalance?.balanceConfigured ?? false}
+                  color="indigo"
+                  desc={`Berlaku hingga 31 Des ${leaveBalanceYear}`}
+                />
 
-              <LeaveBalanceCard
-                title="Cuti Sakit"
-                subtitle="Medical Leave"
-                icon={HeartPulse}
-                used={2}
-                total={14}
-                color="rose"
-                desc="Surat dokter mungkin diperlukan"
-              />
+                <LeaveBalanceCard
+                  title="Cuti Sakit"
+                  subtitle="Medical Leave"
+                  icon={HeartPulse}
+                  approved={sickBalance?.approvedDays ?? 0}
+                  pending={sickBalance?.pendingDays ?? 0}
+                  total={sickBalance?.entitlementDays ?? null}
+                  available={sickBalance?.availableDays ?? null}
+                  configured={sickBalance?.balanceConfigured ?? false}
+                  color="rose"
+                  desc="Surat dokter mungkin diperlukan"
+                />
 
-              <LeaveBalanceCard
-                title="Cuti Khusus"
-                subtitle="Special Leave"
-                icon={CalendarClock}
-                used={0}
-                total={3}
-                color="emerald"
-                desc="Menikah, kedukaan, dan kebutuhan khusus"
-              />
-            </div>
+                <LeaveBalanceCard
+                  title="Cuti Khusus"
+                  subtitle="Special Leave"
+                  icon={CalendarClock}
+                  approved={specialBalance?.approvedDays ?? 0}
+                  pending={specialBalance?.pendingDays ?? 0}
+                  total={specialBalance?.entitlementDays ?? null}
+                  available={specialBalance?.availableDays ?? null}
+                  configured={specialBalance?.balanceConfigured ?? false}
+                  color="emerald"
+                  desc="Menikah, kedukaan, dan kebutuhan khusus"
+                />
+              </div>
+            )}
           </section>
 
           {/* ================================================= */}
           {/* STATUS SUMMARY */}
           {/* ================================================= */}
 
-          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <LeaveSummaryCard
-              icon={CalendarDays}
-              label="Total Pengajuan"
-              value={leaveHistory.length}
-              description="Sepanjang tahun 2026"
-              style="bg-indigo-50 text-indigo-600"
-            />
+          {leaveLoading ? (
+            <LeaveSummarySkeleton />
+          ) : (
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <LeaveSummaryCard
+                icon={CalendarDays}
+                label="Total Pengajuan"
+                value={stats.total}
+                description={`${stats.total} pengajuan pada ${leaveBalanceYear}`}
+                style="bg-indigo-50 text-indigo-600"
+              />
 
-            <LeaveSummaryCard
-              icon={CheckCircle2}
-              label="Disetujui"
-              value={stats.approved}
-              description="Pengajuan approved"
-              style="bg-emerald-50 text-emerald-600"
-            />
+              <LeaveSummaryCard
+                icon={CheckCircle2}
+                label="Disetujui"
+                value={stats.approved}
+                description={`${stats.approved} pengajuan disetujui`}
+                style="bg-emerald-50 text-emerald-600"
+              />
 
-            <LeaveSummaryCard
-              icon={Clock3}
-              label="Menunggu"
-              value={stats.pending}
-              description="Menunggu persetujuan"
-              style="bg-amber-50 text-amber-600"
-            />
+              <LeaveSummaryCard
+                icon={Clock3}
+                label="Menunggu"
+                value={stats.pending}
+                description={`${stats.pending} pengajuan menunggu`}
+                style="bg-amber-50 text-amber-600"
+              />
 
-            <LeaveSummaryCard
-              icon={XCircle}
-              label="Ditolak"
-              value={stats.rejected}
-              description="Tidak disetujui"
-              style="bg-rose-50 text-rose-600"
-            />
-          </section>
+              <LeaveSummaryCard
+                icon={XCircle}
+                label="Ditolak"
+                value={stats.rejected}
+                description={`${stats.rejected} pengajuan ditolak`}
+                style="bg-rose-50 text-rose-600"
+              />
+            </section>
+          )}
 
           {/* ================================================= */}
           {/* UPCOMING + QUICK ACTION */}
@@ -602,67 +1219,19 @@ export default function TimeAndLeave() {
 
             {/* UPCOMING LEAVE */}
 
-            <div className="rounded-[26px] border border-gray-200/80 bg-white p-6 shadow-sm">
-              <div className="mb-6 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
-                    <Plane size={19} />
-                  </div>
-
-                  <div>
-                    <h3 className="font-bold text-gray-950">
-                      Upcoming Leave
-                    </h3>
-
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      Pengajuan cuti terdekat Anda
-                    </p>
-                  </div>
-                </div>
-
-                <span className="rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">
-                  PENDING
-                </span>
-              </div>
-
-              <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 p-5">
-                <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
-                      Cuti Tahunan
-                    </p>
-
-                    <h4 className="mt-2 text-lg font-bold text-gray-950">
-                      20 September 2026
-                    </h4>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      1 Hari • Urus dokumen administrasi
-                    </p>
-                  </div>
-
-                  <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl bg-white shadow-sm">
-                    <span className="text-[10px] font-bold uppercase text-indigo-400">
-                      Sep
-                    </span>
-
-                    <span className="text-xl font-black text-indigo-700">
-                      20
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-5 flex items-center gap-2 border-t border-indigo-100 pt-4 text-xs text-gray-500">
-                  <Clock3
-                    size={14}
-                    className="text-amber-500"
-                  />
-
-                  Menunggu persetujuan manager
-                </div>
-              </div>
-            </div>
+            <UpcomingLeavePanel
+              item={upcomingLeave}
+              loading={leaveLoading}
+              error={
+                leaveError &&
+                leaveRequests.length === 0
+                  ? leaveError
+                  : null
+              }
+              onRetry={() =>
+                void loadLeaveData()
+              }
+            />
 
             {/* QUICK ACTION */}
 
@@ -686,10 +1255,11 @@ export default function TimeAndLeave() {
                 />
 
                 <QuickAction
-                  icon={FileText}
-                  title="Reimburse Medis"
-                  description="Klaim biaya kesehatan"
+                  icon={WalletCards}
+                  title="Expenses & Claims"
+                  description="Pantau dan ajukan via AI"
                   style="bg-blue-50 text-blue-600"
+                  href="/reimbursement"
                 />
 
                 <QuickAction
@@ -813,11 +1383,34 @@ export default function TimeAndLeave() {
                     setHistoryFilter('Rejected')
                   }
                 />
+
+                <HistoryFilter
+                  label="Cancelled"
+                  active={
+                    historyFilter === 'Cancelled'
+                  }
+                  onClick={() =>
+                    setHistoryFilter('Cancelled')
+                  }
+                />
               </div>
             </div>
 
             <div className="overflow-hidden rounded-[26px] border border-gray-200/80 bg-white shadow-sm">
-              {filteredHistory.length > 0 ? (
+              {leaveLoading ? (
+                <LeaveHistorySkeleton />
+              ) : leaveError &&
+                leaveRequests.length === 0 ? (
+                <div className="p-5">
+                  <LeaveSectionError
+                    title="Riwayat cuti belum dapat dimuat"
+                    message={leaveError}
+                    onRetry={() =>
+                      void loadLeaveData()
+                    }
+                  />
+                </div>
+              ) : filteredHistory.length > 0 ? (
                 <div className="divide-y divide-gray-100">
                   {filteredHistory.map((item) => (
                     <LeaveHistoryItem
@@ -834,11 +1427,15 @@ export default function TimeAndLeave() {
                   />
 
                   <p className="mt-3 text-sm font-semibold text-gray-700">
-                    Tidak ada pengajuan
+                    {historyFilter === 'ALL'
+                      ? 'Belum ada pengajuan cuti'
+                      : `Tidak ada pengajuan ${historyFilter.toLowerCase()}`}
                   </p>
 
                   <p className="mt-1 text-xs text-gray-400">
-                    Belum ada pengajuan dengan status tersebut.
+                    {historyFilter === 'ALL'
+                      ? 'Pengajuan dari People Assistant akan muncul di sini.'
+                      : 'Coba pilih filter lain untuk melihat riwayat pengajuan.'}
                   </p>
                 </div>
               )}
@@ -1155,7 +1752,7 @@ function OvertimeRequestCard({
             {formatOvertimeDate(
               request.startAt,
             )}
-            {' • '}
+            {' â€¢ '}
             {
               request.durationMinutes
             }{' '}
@@ -1237,7 +1834,7 @@ function OvertimeTimeline({
         title={
           request.manager
             ?.name
-            ? `${request.manager.name} · Line Manager`
+            ? `${request.manager.name} Â· Line Manager`
             : 'Line Manager Approval'
         }
         description={
@@ -1267,7 +1864,7 @@ function OvertimeTimeline({
           title={
             request.secondApprover
               ?.name
-              ? `${request.secondApprover.name} · Second Approver`
+              ? `${request.secondApprover.name} Â· Second Approver`
               : 'Second Approval'
           }
           description={
@@ -1512,6 +2109,130 @@ function formatOvertimeDate(
   ).format(date);
 }
 
+function formatLeaveLastUpdated(
+  value: Date,
+) {
+  return new Intl.DateTimeFormat(
+    'id-ID',
+    {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone:
+        'Asia/Jakarta',
+    },
+  ).format(value);
+}
+
+function LeaveSectionError({
+  title,
+  message,
+  onRetry,
+}: {
+  title: string;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-[24px] border border-rose-100 bg-rose-50 p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <AlertCircle
+            size={20}
+            className="mt-0.5 shrink-0 text-rose-500"
+          />
+          <div>
+            <p className="text-sm font-bold text-rose-700">
+              {title}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-rose-600">
+              {message}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+        >
+          Coba lagi
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LeaveBalanceSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      {[0, 1, 2].map((item) => (
+        <div
+          key={item}
+          className="animate-pulse rounded-[24px] border border-gray-200/80 bg-white p-6 shadow-sm"
+        >
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 rounded-xl bg-gray-100" />
+            <div className="space-y-2">
+              <div className="h-3 w-28 rounded bg-gray-100" />
+              <div className="h-2.5 w-20 rounded bg-gray-100" />
+            </div>
+          </div>
+          <div className="mt-8 h-9 w-24 rounded bg-gray-100" />
+          <div className="mt-3 h-2.5 w-32 rounded bg-gray-100" />
+          <div className="mt-6 h-2 w-full rounded-full bg-gray-100" />
+          <div className="mt-4 flex justify-between">
+            <div className="h-2.5 w-24 rounded bg-gray-100" />
+            <div className="h-2.5 w-20 rounded bg-gray-100" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LeaveSummarySkeleton() {
+  return (
+    <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {[0, 1, 2, 3].map((item) => (
+        <div
+          key={item}
+          className="animate-pulse rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm lg:p-5"
+        >
+          <div className="h-10 w-10 rounded-xl bg-gray-100" />
+          <div className="mt-4 h-2.5 w-24 rounded bg-gray-100" />
+          <div className="mt-3 h-6 w-10 rounded bg-gray-100" />
+          <div className="mt-3 h-2.5 w-28 rounded bg-gray-100" />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function LeaveHistorySkeleton() {
+  return (
+    <div className="divide-y divide-gray-100">
+      {[0, 1, 2].map((item) => (
+        <div
+          key={item}
+          className="flex animate-pulse gap-4 px-6 py-5"
+        >
+          <div className="h-11 w-11 shrink-0 rounded-xl bg-gray-100" />
+          <div className="flex-1">
+            <div className="flex gap-2">
+              <div className="h-3.5 w-28 rounded bg-gray-100" />
+              <div className="h-5 w-16 rounded-full bg-gray-100" />
+            </div>
+            <div className="mt-3 h-2.5 w-56 max-w-full rounded bg-gray-100" />
+            <div className="mt-3 h-2.5 w-2/3 rounded bg-gray-100" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* =========================================================
    LEAVE BALANCE CARD
 ========================================================= */
@@ -1520,27 +2241,39 @@ function LeaveBalanceCard({
   title,
   subtitle,
   icon: Icon,
-  used,
+  approved,
+  pending,
   total,
+  available,
+  configured,
   color,
   desc,
-}: any) {
-  const remaining = total - used;
+}: {
+  title: string;
+  subtitle: string;
+  icon: any;
+  approved: number;
+  pending: number;
+  total: number | null;
+  available: number | null;
+  configured: boolean;
+  color: 'indigo' | 'rose' | 'emerald';
+  desc: string;
+}) {
+  const committed =
+    approved + pending;
 
   const percentage =
-    total === 0
-      ? 0
-      : Math.min((used / total) * 100, 100);
+    configured &&
+    typeof total === 'number' &&
+    total > 0
+      ? Math.min(
+          (committed / total) * 100,
+          100,
+        )
+      : 0;
 
-  const colorMap: Record<
-    string,
-    {
-      bg: string;
-      text: string;
-      progress: string;
-      soft: string;
-    }
-  > = {
+  const colorMap = {
     indigo: {
       bg: 'bg-indigo-50',
       text: 'text-indigo-600',
@@ -1561,13 +2294,21 @@ function LeaveBalanceCard({
       progress: 'bg-emerald-500',
       soft: 'bg-emerald-100',
     },
-  };
+  } satisfies Record<
+    'indigo' | 'rose' | 'emerald',
+    {
+      bg: string;
+      text: string;
+      progress: string;
+      soft: string;
+    }
+  >;
 
-  const theme = colorMap[color];
+  const theme =
+    colorMap[color];
 
   return (
     <div className="group rounded-[24px] border border-gray-200/80 bg-white p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-100 hover:shadow-lg hover:shadow-gray-200/50">
-
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div
@@ -1593,42 +2334,297 @@ function LeaveBalanceCard({
         />
       </div>
 
-      <div className="mt-7 flex items-end gap-2">
-        <span className="text-4xl font-black tracking-tight text-gray-950">
-          {remaining}
-        </span>
+      {configured ? (
+        <>
+          <div className="mt-7 flex items-end gap-2">
+            <span className="text-4xl font-black tracking-tight text-gray-950">
+              {available ?? 0}
+            </span>
 
-        <span className="mb-1 text-sm font-medium text-gray-400">
-          dari {total} hari
-        </span>
-      </div>
+            <span className="mb-1 text-sm font-medium text-gray-400">
+              dari {total ?? 0} hari
+            </span>
+          </div>
 
-      <p className="mt-1 text-xs text-gray-400">
-        Saldo tersedia
+          <p className="mt-1 text-xs text-gray-400">
+            Saldo tersedia
+          </p>
+
+          <div
+            className={`mt-5 h-2 overflow-hidden rounded-full ${theme.soft}`}
+          >
+            <div
+              className={`h-full rounded-full ${theme.progress}`}
+              style={{
+                width: `${percentage}%`,
+              }}
+            />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-gray-400">
+              Disetujui{' '}
+              <strong className="font-semibold text-gray-700">
+                {approved} hari
+              </strong>
+            </span>
+
+            <span className="text-xs text-gray-400">
+              Pending{' '}
+              <strong className="font-semibold text-amber-600">
+                {pending} hari
+              </strong>
+            </span>
+          </div>
+        </>
+      ) : (
+        <div className="mt-7">
+          <p className="text-2xl font-black tracking-tight text-gray-400">
+            â€”
+          </p>
+
+          <p className="mt-2 text-sm font-semibold text-gray-600">
+            Belum dikonfigurasi
+          </p>
+
+          <p className="mt-1 text-xs leading-5 text-gray-400">
+            Entitlement untuk jenis cuti ini belum tersedia di sistem.
+          </p>
+        </div>
+      )}
+
+      <p className="mt-4 truncate text-[10px] text-gray-400">
+        {desc}
       </p>
+    </div>
+  );
+}
 
-      {/* PROGRESS */}
+function UpcomingLeavePanel({
+  item,
+  loading,
+  error,
+  onRetry,
+}: {
+  item: LeaveItem | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex min-h-64 items-center justify-center rounded-[26px] border border-gray-200/80 bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-3 text-sm text-gray-500">
+          <RefreshCw
+            size={17}
+            className="animate-spin text-indigo-500"
+          />
+          Memuat upcoming leave...
+        </div>
+      </div>
+    );
+  }
 
-      <div className={`mt-5 h-2 overflow-hidden rounded-full ${theme.soft}`}>
-        <div
-          className={`h-full rounded-full ${theme.progress}`}
-          style={{
-            width: `${percentage}%`,
-          }}
-        />
+  if (error && !item) {
+    return (
+      <div className="rounded-[26px] border border-gray-200/80 bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+            <AlertCircle size={19} />
+          </div>
+
+          <div>
+            <h3 className="font-bold text-gray-950">
+              Upcoming Leave
+            </h3>
+            <p className="mt-0.5 text-xs text-gray-400">
+              Pengajuan cuti terdekat Anda
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-rose-100 bg-rose-50 p-5">
+          <p className="text-sm font-bold text-rose-700">
+            Data belum dapat dimuat
+          </p>
+          <p className="mt-1 text-xs leading-5 text-rose-600">
+            {error}
+          </p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-4 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+          >
+            Coba lagi
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!item) {
+    return (
+      <div className="rounded-[26px] border border-gray-200/80 bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+            <Plane size={19} />
+          </div>
+
+          <div>
+            <h3 className="font-bold text-gray-950">
+              Upcoming Leave
+            </h3>
+            <p className="mt-0.5 text-xs text-gray-400">
+              Pengajuan cuti terdekat Anda
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-5 py-10 text-center">
+          <CalendarDays
+            size={28}
+            className="mx-auto text-gray-300"
+          />
+          <p className="mt-3 text-sm font-semibold text-gray-700">
+            Belum ada cuti mendatang
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            Pengajuan pending atau approved akan muncul di sini.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const status =
+    getStatusStyle(
+      item.status,
+    );
+
+  const StatusIcon =
+    status.icon;
+
+  const dateOnly =
+    item.startDate.slice(
+      0,
+      10,
+    );
+
+  const date =
+    new Date(
+      `${dateOnly}T00:00:00Z`,
+    );
+
+  const month =
+    new Intl.DateTimeFormat(
+      'id-ID',
+      {
+        month: 'short',
+        timeZone: 'UTC',
+      },
+    ).format(date);
+
+  const day =
+    new Intl.DateTimeFormat(
+      'id-ID',
+      {
+        day: '2-digit',
+        timeZone: 'UTC',
+      },
+    ).format(date);
+
+  const progressText =
+    item.status ===
+    'Approved'
+      ? item.workflowStatus ===
+        'COMPLETED'
+        ? 'Pengajuan telah disetujui dan workflow selesai.'
+        : 'Pengajuan telah disetujui manager.'
+      : item.status ===
+          'Rejected'
+        ? item.managerDecisionNote ||
+          'Pengajuan ditolak oleh manager.'
+        : item.status ===
+            'Cancelled'
+          ? 'Pengajuan telah dibatalkan.'
+          : item.workflowStatus ===
+              'FAILED'
+            ? 'Pengajuan tersimpan, tetapi workflow approval perlu dicoba kembali.'
+            : `Menunggu persetujuan ${
+                item.managerName ||
+                'manager'
+              }.`;
+
+  return (
+    <div className="rounded-[26px] border border-gray-200/80 bg-white p-6 shadow-sm">
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+            <Plane size={19} />
+          </div>
+
+          <div>
+            <h3 className="font-bold text-gray-950">
+              Upcoming Leave
+            </h3>
+
+            <p className="mt-0.5 text-xs text-gray-400">
+              Pengajuan cuti terdekat Anda
+            </p>
+          </div>
+        </div>
+
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${status.badge}`}
+        >
+          <StatusIcon size={11} />
+          {status.label}
+        </span>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-xs text-gray-400">
-          Digunakan{' '}
-          <strong className="font-semibold text-gray-700">
-            {used} hari
-          </strong>
-        </span>
+      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 p-5">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
+              {item.type}
+            </p>
 
-        <span className="truncate text-[10px] text-gray-400">
-          {desc}
-        </span>
+            <h4 className="mt-2 text-lg font-bold text-gray-950">
+              {item.dateLabel}
+            </h4>
+
+            <p className="mt-1 text-sm text-gray-500">
+              {item.days}{' '}
+              Hari â€¢{' '}
+              {item.note}
+            </p>
+
+            <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              {item.requestCode}
+            </p>
+          </div>
+
+          <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl bg-white shadow-sm">
+            <span className="text-[10px] font-bold uppercase text-indigo-400">
+              {month}
+            </span>
+
+            <span className="text-xl font-black text-indigo-700">
+              {day}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-start gap-2 border-t border-indigo-100 pt-4 text-xs leading-5 text-gray-500">
+          <Clock3
+            size={14}
+            className="mt-0.5 shrink-0 text-amber-500"
+          />
+
+          <span>
+            {progressText}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -1677,10 +2673,13 @@ function QuickAction({
   title,
   description,
   style,
+  href,
 }: any) {
-  return (
-    <button className="group flex items-center gap-3 rounded-2xl border border-gray-200/80 bg-gray-50/70 p-4 text-left transition hover:border-indigo-100 hover:bg-white hover:shadow-sm">
+  const className =
+    'group flex items-center gap-3 rounded-2xl border border-gray-200/80 bg-gray-50/70 p-4 text-left transition hover:border-indigo-100 hover:bg-white hover:shadow-sm';
 
+  const content = (
+    <>
       <div
         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${style}`}
       >
@@ -1701,6 +2700,26 @@ function QuickAction({
         size={15}
         className="text-gray-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-500"
       />
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={className}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={className}
+    >
+      {content}
     </button>
   );
 }
@@ -1741,59 +2760,381 @@ function LeaveHistoryItem({
 }: {
   item: LeaveItem;
 }) {
-  const status = getStatusStyle(item.status);
+  const [expanded, setExpanded] =
+    useState(false);
+
+  const status =
+    getStatusStyle(item.status);
+
+  const workflow =
+    getLeaveWorkflowStyle(
+      item.workflowStatus,
+    );
+
+  const managerState:
+    | 'done'
+    | 'current'
+    | 'rejected'
+    | 'disabled' =
+    item.status === 'Cancelled'
+      ? 'disabled'
+      : item.managerDecision ===
+          'REJECTED'
+        ? 'rejected'
+        : item.managerDecision ===
+            'APPROVED'
+          ? 'done'
+          : 'current';
+
+  const finalState:
+    | 'done'
+    | 'current'
+    | 'rejected'
+    | 'disabled' =
+    item.status === 'Approved'
+      ? 'done'
+      : item.status === 'Rejected'
+        ? 'rejected'
+        : 'disabled';
+
+  const managerDecisionTime =
+    formatLeaveDateTime(
+      item.managerDecidedAt,
+    );
+
+  const managerDescription =
+    item.managerDecision === 'REJECTED'
+      ? `${
+          item.managerDecisionNote ||
+          'Pengajuan ditolak oleh Line Manager.'
+        }${
+          managerDecisionTime
+            ? ` Â· ${managerDecisionTime}`
+            : ''
+        }`
+      : item.managerDecision === 'APPROVED'
+        ? `${
+            item.managerDecisionNote ||
+            'Line Manager telah menyetujui pengajuan.'
+          }${
+            managerDecisionTime
+              ? ` Â· ${managerDecisionTime}`
+              : ''
+          }`
+        : item.workflowStatus === 'FAILED'
+          ? 'Workflow approval gagal dijalankan. Pengajuan perlu dicoba kembali.'
+          : `Menunggu keputusan ${
+              item.managerName ||
+              'Line Manager'
+            }.`;
+
+  const finalDescription =
+    item.status === 'Approved'
+      ? 'Pengajuan cuti telah disetujui.'
+      : item.status === 'Rejected'
+        ? 'Pengajuan cuti telah ditolak.'
+        : item.status === 'Cancelled'
+          ? 'Pengajuan cuti telah dibatalkan.'
+          : 'Menunggu keputusan manager.';
 
   return (
-    <div className="group flex cursor-pointer flex-col gap-4 px-6 py-5 transition hover:bg-gray-50/70 sm:flex-row sm:items-center sm:justify-between">
+    <article className="overflow-hidden border-b border-gray-100 last:border-b-0">
+      <button
+        type="button"
+        onClick={() =>
+          setExpanded(
+            (current) => !current,
+          )
+        }
+        className="group flex w-full flex-col gap-4 px-6 py-5 text-left transition hover:bg-gray-50/70 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="flex min-w-0 gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+            <CalendarDays size={19} />
+          </div>
 
-      <div className="flex min-w-0 gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="font-bold text-gray-900">
+                {item.type}
+              </h4>
 
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-          <CalendarDays size={19} />
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${status.badge}`}
+              >
+                <status.icon size={11} />
+                {status.label}
+              </span>
+
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${workflow.badge}`}
+              >
+                <workflow.icon size={11} />
+                {workflow.label}
+              </span>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <span>{item.dateLabel}</span>
+
+              <span className="h-1 w-1 rounded-full bg-gray-300" />
+
+              <span className="font-semibold text-gray-700">
+                {item.days} Hari
+              </span>
+
+              <span className="h-1 w-1 rounded-full bg-gray-300" />
+
+              <span>
+                Diajukan {item.submittedAt}
+              </span>
+            </div>
+
+            <p className="mt-2 text-xs text-gray-400 sm:max-w-2xl sm:truncate">
+              {item.note}
+            </p>
+
+            <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              {item.requestCode}
+            </p>
+
+            {item.workflowStatus === 'FAILED' && (
+              <div className="mt-3 flex max-w-2xl items-start gap-2 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5">
+                <AlertCircle
+                  size={14}
+                  className="mt-0.5 shrink-0 text-rose-500"
+                />
+                <p className="text-[11px] leading-5 text-rose-700">
+                  Workflow approval gagal. Request tetap tersimpan sebagai{' '}
+                  <strong className="font-bold">
+                    {item.status}
+                  </strong>{' '}
+                  dan membutuhkan retry automation.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <ChevronRight
+          size={18}
+          className={`hidden shrink-0 text-gray-300 transition sm:block ${
+            expanded
+              ? 'rotate-90 text-indigo-500'
+              : 'group-hover:translate-x-0.5 group-hover:text-indigo-500'
+          }`}
+        />
+      </button>
+
+      {expanded && (
+        <div className="border-t border-gray-100 bg-gray-50/60 px-6 py-6">
+          <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
+            <div className="rounded-2xl border border-gray-200/80 bg-white p-5">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-gray-900">
+                    Approval Timeline
+                  </p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    Status proses persetujuan cuti.
+                  </p>
+                </div>
+
+                <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-bold text-gray-500">
+                  {item.requestCode}
+                </span>
+              </div>
+
+              <TimelineStep
+                state="done"
+                title="Request submitted"
+                description={`Pengajuan cuti dibuat pada ${item.submittedAt}.`}
+              />
+
+              <TimelineStep
+                state={managerState}
+                title={
+                  item.managerName
+                    ? `${item.managerName} Â· Line Manager`
+                    : 'Line Manager Approval'
+                }
+                description={
+                  managerDescription
+                }
+              />
+
+              <TimelineStep
+                last
+                state={finalState}
+                title={
+                  item.status ===
+                  'Cancelled'
+                    ? 'Request Cancelled'
+                    : 'Final Decision'
+                }
+                description={
+                  finalDescription
+                }
+              />
+            </div>
+
+            <div className="space-y-3">
+              <LeaveMetaCard
+                label="Workflow"
+                value={workflow.label}
+                description={
+                  item.workflowStatus ===
+                  'FAILED'
+                    ? 'Request aman di database, tetapi automation approval gagal dan perlu retry.'
+                    : item.workflowStatus ===
+                        'COMPLETED'
+                      ? 'Automation approval selesai.'
+                      : 'Automation masih diproses.'
+                }
+                icon={workflow.icon}
+                style={workflow.soft}
+              />
+
+              <LeaveMetaCard
+                label="Manager"
+                value={
+                  item.managerName ||
+                  'Line Manager'
+                }
+                description={
+                  item.managerDecision ===
+                  'APPROVED'
+                    ? 'Keputusan: Approved'
+                    : item.managerDecision ===
+                        'REJECTED'
+                      ? 'Keputusan: Rejected'
+                      : 'Menunggu keputusan'
+                }
+                icon={BriefcaseBusiness}
+                style="bg-indigo-50 text-indigo-600"
+              />
+
+              <LeaveMetaCard
+                label="Policy"
+                value={
+                  item.policySource || '-'
+                }
+                description="Policy source yang digunakan saat validasi."
+                icon={FileText}
+                style="bg-violet-50 text-violet-600"
+              />
+
+              {item.workflowRunId && (
+                <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs text-gray-500">
+                  Workflow Run ID:{' '}
+                  <strong className="font-semibold text-gray-700">
+                    {item.workflowRunId}
+                  </strong>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function LeaveMetaCard({
+  label,
+  value,
+  description,
+  icon: Icon,
+  style,
+}: {
+  label: string;
+  value: string;
+  description: string;
+  icon: any;
+  style: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200/80 bg-white p-4">
+      <div className="flex items-start gap-3">
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${style}`}
+        >
+          <Icon size={16} />
         </div>
 
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="font-bold text-gray-900">
-              {item.type}
-            </h4>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">
+            {label}
+          </p>
 
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${status.badge}`}
-            >
-              <status.icon size={11} />
-              {status.label}
-            </span>
-          </div>
+          <p className="mt-1 truncate text-sm font-bold text-gray-900">
+            {value}
+          </p>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-            <span>{item.dateLabel}</span>
-
-            <span className="h-1 w-1 rounded-full bg-gray-300" />
-
-            <span className="font-semibold text-gray-700">
-              {item.days} Hari
-            </span>
-
-            <span className="h-1 w-1 rounded-full bg-gray-300" />
-
-            <span>
-              Diajukan {item.submittedAt}
-            </span>
-          </div>
-
-          <p className="mt-2 truncate text-xs text-gray-400">
-            {item.note}
+          <p className="mt-1 text-xs leading-5 text-gray-400">
+            {description}
           </p>
         </div>
       </div>
-
-      <ChevronRight
-        size={18}
-        className="hidden shrink-0 text-gray-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-500 sm:block"
-      />
     </div>
   );
+}
+
+function getLeaveWorkflowStyle(
+  status: WorkflowStatus,
+) {
+  switch (status) {
+    case 'COMPLETED':
+      return {
+        label: 'Workflow selesai',
+        icon: CheckCircle2,
+        badge:
+          'border-emerald-100 bg-emerald-50 text-emerald-700',
+        soft:
+          'bg-emerald-50 text-emerald-600',
+      };
+
+    case 'FAILED':
+      return {
+        label: 'Workflow gagal',
+        icon: AlertCircle,
+        badge:
+          'border-rose-100 bg-rose-50 text-rose-700',
+        soft:
+          'bg-rose-50 text-rose-600',
+      };
+
+    case 'RUNNING':
+      return {
+        label: 'Workflow berjalan',
+        icon: RefreshCw,
+        badge:
+          'border-blue-100 bg-blue-50 text-blue-700',
+        soft:
+          'bg-blue-50 text-blue-600',
+      };
+
+    case 'TRIGGERED':
+      return {
+        label: 'Workflow dipicu',
+        icon: Clock3,
+        badge:
+          'border-amber-100 bg-amber-50 text-amber-700',
+        soft:
+          'bg-amber-50 text-amber-600',
+      };
+
+    case 'NOT_STARTED':
+    default:
+      return {
+        label: 'Belum dimulai',
+        icon: Circle,
+        badge:
+          'border-gray-200 bg-gray-50 text-gray-500',
+        soft:
+          'bg-gray-100 text-gray-500',
+      };
+  }
 }
 
 /* =========================================================
@@ -2048,5 +3389,14 @@ function getStatusStyle(
         badge:
           'border-rose-100 bg-rose-50 text-rose-700',
       };
+
+    case 'Cancelled':
+      return {
+        label: 'Dibatalkan',
+        icon: XCircle,
+        badge:
+          'border-gray-200 bg-gray-50 text-gray-500',
+      };
   }
 }
+
