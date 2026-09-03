@@ -333,7 +333,7 @@ function HomeContent() {
       id: 'welcome-msg',
       role: 'assistant',
       content:
-        'Halo Riski! ðŸ‘‹ Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
+        'Halo! 👋 Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
       time: new Date().toLocaleTimeString(
         'id-ID',
         {
@@ -351,7 +351,7 @@ function HomeContent() {
       id: 'welcome-msg',
       role: 'assistant',
       content:
-        'Halo Riski! ðŸ‘‹ Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
+        'Halo! 👋 Saya **People Assistant**, AI HR yang siap membantu menjawab pertanyaan tentang cuti, benefit, reimbursement, payroll, kebijakan kerja, dan informasi perusahaan lainnya.',
       time: new Date().toLocaleTimeString(
         'id-ID',
         {

@@ -646,7 +646,7 @@ export default function TimeAndLeave() {
 
           const response =
             await fetch(
-              '/api/overtime?employeeId=emp_003&limit=20',
+              '/api/overtime?limit=20',
               {
                 method:
                   'GET',

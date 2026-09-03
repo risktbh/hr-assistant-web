@@ -259,6 +259,27 @@ export async function POST(
       message.trim();
 
     /* =====================================================
+       9B — SESSION IDENTITY CONSISTENCY
+    ===================================================== */
+
+    const sessionEmployeeId =
+      process.env
+        .DEMO_EMPLOYEE_ID
+        ?.trim();
+
+    if (!sessionEmployeeId) {
+      return jsonResponse(
+        {
+          error:
+            'Server belum memiliki employee context.',
+          code:
+            'EMPLOYEE_CONTEXT_NOT_CONFIGURED',
+        },
+        500,
+      );
+    }
+
+    /* =====================================================
        GEMINI API KEY
     ===================================================== */
 
@@ -308,7 +329,7 @@ export async function POST(
                   : cleanMessage,
 
               userId:
-                'riski',
+                sessionEmployeeId,
             },
           },
         );

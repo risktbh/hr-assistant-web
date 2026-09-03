@@ -88,10 +88,9 @@ export async function POST(
       await req.json();
 
     const employeeId =
-      typeof body?.employeeId ===
-      'string'
-        ? body.employeeId.trim()
-        : '';
+      process.env
+        .DEMO_EMPLOYEE_ID
+        ?.trim() || '';
 
     const startAt =
       body?.startAt;
@@ -111,9 +110,9 @@ export async function POST(
 
     if (!employeeId) {
       return errorResponse(
-        'employeeId wajib diisi.',
-        'EMPLOYEE_REQUIRED',
-        400,
+        'Server belum memiliki employee context.',
+        'EMPLOYEE_CONTEXT_NOT_CONFIGURED',
+        500,
       );
     }
 
@@ -206,11 +205,7 @@ export async function POST(
               : 'MANUAL_TEST',
 
           actorId:
-            typeof body
-              ?.actorId ===
-            'string'
-              ? body.actorId
-              : employeeId,
+              employeeId,
         },
       );
 
@@ -269,16 +264,15 @@ export async function POST(
  *
  * MODE 2
  *
- * GET /api/overtime?employeeId=emp_003
+ * GET /api/overtime
  *
- * Mendapatkan daftar overtime employee.
+ * Mendapatkan daftar overtime employee aktif dari DEMO_EMPLOYEE_ID.
  *
  *
  * MODE 3
  *
  * GET /api/overtime
- *   ?employeeId=emp_003
- *   &status=PENDING
+ *   ?status=PENDING
  *   &limit=10
  */
 
@@ -299,11 +293,10 @@ export async function GET(
         ?.trim();
 
     const employeeId =
-      url.searchParams
-        .get(
-          'employeeId',
-        )
-        ?.trim();
+      process.env
+        .DEMO_EMPLOYEE_ID
+        ?.trim() ||
+      '';
 
     const statusParam =
       url.searchParams
@@ -317,6 +310,17 @@ export async function GET(
       url.searchParams.get(
         'limit',
       );
+    /* =====================================================
+       9B.2 SERVER EMPLOYEE GUARD
+    ===================================================== */
+
+    if (!employeeId) {
+      return errorResponse(
+        'Server belum memiliki employee context.',
+        'EMPLOYEE_CONTEXT_NOT_CONFIGURED',
+        500,
+      );
+    }
 
     /* =====================================================
        GET SINGLE REQUEST
@@ -327,6 +331,17 @@ export async function GET(
         await getOvertimeRequest(
           requestId,
         );
+
+      if (
+        request.employeeId !==
+        employeeId
+      ) {
+        return errorResponse(
+          'Pengajuan lembur tidak ditemukan.',
+          'OVERTIME_NOT_FOUND_OR_NOT_OWNED',
+          404,
+        );
+      }
 
       return Response.json({
         success: true,
@@ -340,13 +355,7 @@ export async function GET(
        GET EMPLOYEE REQUESTS
     ===================================================== */
 
-    if (!employeeId) {
-      return errorResponse(
-        'Gunakan requestId atau employeeId.',
-        'QUERY_REQUIRED',
-        400,
-      );
-    }
+
 
     /* =====================================================
        STATUS VALIDATION

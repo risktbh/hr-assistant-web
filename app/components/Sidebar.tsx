@@ -37,6 +37,13 @@ import {
    TYPES
 ========================================================= */
 
+type CurrentEmployee = {
+  id: string;
+  name: string;
+  position: string | null;
+  department: string | null;
+};
+
 type ChatSession = {
   id: string;
   title: string;
@@ -134,6 +141,13 @@ export default function Sidebar({
     setIsCollapsed,
   ] = useState(false);
 
+  const [
+    currentEmployee,
+    setCurrentEmployee,
+  ] = useState<CurrentEmployee | null>(
+    null,
+  );
+
   /* =======================================================
      FETCH CHAT HISTORY
   ======================================================= */
@@ -198,6 +212,57 @@ export default function Sidebar({
     fetchSessions,
     currentSessionId,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCurrentEmployee() {
+      try {
+        const response =
+          await fetch(
+            '/api/me',
+            {
+              cache:
+                'no-store',
+            },
+          );
+
+        const payload =
+          await response
+            .json();
+
+        if (
+          !response.ok ||
+          !payload?.success ||
+          !payload?.data
+        ) {
+          throw new Error(
+            payload
+              ?.error
+              ?.message ||
+              'Employee profile tidak tersedia.',
+          );
+        }
+
+        if (!cancelled) {
+          setCurrentEmployee(
+            payload.data as CurrentEmployee,
+          );
+        }
+      } catch (error) {
+        console.error(
+          '[CURRENT EMPLOYEE LOAD ERROR]',
+          error,
+        );
+      }
+    }
+
+    void loadCurrentEmployee();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* =======================================================
      FILTER HISTORY
@@ -921,13 +986,19 @@ export default function Sidebar({
             <div className="relative shrink-0">
               {/* Avatar dengan foto dari folder public */}
               <div className="relative flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-indigo-100 overflow-hidden bg-gray-50">
-                <Image 
-                  src="/foto-profil.png" // <-- Ganti dengan nama file foto kamu di folder public
-                  alt="Foto Profil"
-                  fill
-                  sizes="40px"
-                  className="object-cover"
-                />
+                <span className="text-xs font-bold text-indigo-600">
+                  {(currentEmployee?.name ??
+                    'Employee')
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map(
+                      (part) =>
+                        part.charAt(0),
+                    )
+                    .join('')
+                    .toUpperCase()}
+                </span>
               </div>
 
               {/* Titik hijau status aktif */}
@@ -938,7 +1009,8 @@ export default function Sidebar({
               <div className="min-w-0">
 
                 <p className="truncate text-xs font-bold text-gray-900">
-                  Riski Mardianto
+                  {currentEmployee?.name ??
+                    'Employee'}
                 </p>
 
                 <div className="mt-1 flex items-center gap-1.5">
@@ -949,7 +1021,9 @@ export default function Sidebar({
                   />
 
                   <p className="truncate text-[10px] text-gray-400">
-                    HR Manager
+                    {currentEmployee?.position ??
+                      currentEmployee?.department ??
+                      'Employee'}
                   </p>
                 </div>
               </div>

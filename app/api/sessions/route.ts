@@ -10,10 +10,14 @@ const prisma = new PrismaClient({ adapter });
 export async function GET(req: Request) {
   try {
     // Mengambil riwayat sesi obrolan, diurutkan dari yang paling baru
-    // (Sementara kita hardcode userId "riski" sesuai dengan di sidebar)
+    // Demo scope mengikuti DEMO_EMPLOYEE_ID dari server.
     const sessions = await prisma.chatSession.findMany({
       where: {
-        userId: 'riski'
+        userId:
+        process.env
+          .DEMO_EMPLOYEE_ID
+          ?.trim() ||
+        '__DEMO_EMPLOYEE_NOT_CONFIGURED__'
       },
       orderBy: {
         updatedAt: 'desc'
