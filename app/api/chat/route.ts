@@ -64,6 +64,10 @@ import {
   createReimbursementActionToken,
 } from '@/lib/security/reimbursement-action-token';
 
+import {
+  createGetReimbursementStatusTool,
+} from '@/lib/ai/reimbursement-status';
+
 
 /* =========================================================
    RUNTIME
@@ -364,6 +368,18 @@ export async function POST(
 
     const getLeaveStatusTool =
       createGetLeaveStatusTool({
+        prisma,
+        employeeId:
+          serverEmployeeId,
+      });
+
+    /*
+     * 8J.2 — Reimbursement status tool.
+     * Employee identity berasal dari serverEmployeeId,
+     * bukan dari LLM / browser.
+     */
+    const getReimbursementStatusTool =
+      createGetReimbursementStatusTool({
         prisma,
         employeeId:
           serverEmployeeId,
@@ -761,6 +777,8 @@ export async function POST(
       prepareOvertimeRequestTool,
       prepareReimbursementRequestTool,
       getLeaveStatusTool,
+
+      getReimbursementStatusTool,
     ];
 
     /* =====================================================
@@ -775,6 +793,54 @@ akurat, dan ramah.
 
 WAKTU ACUAN SAAT INI:
 ${jakartaNow}
+
+ATURAN DATA TRANSAKSIONAL — WAJIB — 8J.3
+
+Untuk pertanyaan CURRENT STATE tentang data employee,
+saldo, status, progress, approval, atau transaksi:
+
+1. WAJIB baca ulang tool transactional pada TURN SAAT INI.
+2. Chat history hanya context percakapan, BUKAN source of truth.
+3. Jangan menjawab current state hanya dari pesan assistant lama.
+4. Jangan gunakan RAG / knowledge base untuk status transaksi.
+5. Jika nilai di chat history berbeda dengan hasil tool terbaru,
+   HASIL TOOL TERBARU yang authoritative.
+
+ROUTING CURRENT STATE:
+- profil employee / saldo / sisa cuti
+  → get_employee_context
+- status / progress pengajuan cuti
+  → get_leave_status
+- status / progress overtime
+  → get_overtime_status
+- status / progress / ringkasan reimbursement
+  → get_reimbursement_status
+
+CONTOH WAJIB TOOL:
+"Berapa sisa cuti saya sekarang?"
+→ get_employee_context
+
+"Status cuti saya sekarang?"
+→ get_leave_status
+
+"Overtime terakhir saya sudah disetujui?"
+→ get_overtime_status
+
+"Status reimbursement saya?"
+→ get_reimbursement_status
+
+"RB-... sekarang bagaimana?"
+→ get_reimbursement_status
+
+PENTING:
+- Pertanyaan follow-up seperti "kalau sekarang bagaimana?",
+  "sudah berubah?", "masih pending?", "sudah approved?"
+  tetap WAJIB membaca tool transactional lagi jika domain
+  transaksi dapat ditentukan dari konteks percakapan.
+- workflowStatus FAILED bukan business rejection.
+- Jangan mengarang current state jika tool gagal atau data
+  tidak ditemukan.
+
 
 Gunakan tools berdasarkan intent pengguna.
 
@@ -925,6 +991,39 @@ PENTING:
 - JANGAN membuat perubahan database.
 - Pengajuan aktual baru boleh dilakukan setelah
   pengguna melakukan konfirmasi.
+
+STATUS REIMBURSEMENT / CLAIM — TRANSACTIONAL
+
+Jika pengguna menanyakan status, progress, riwayat,
+jumlah, atau request reimbursement miliknya:
+
+→ gunakan get_reimbursement_status
+
+Contoh:
+"Status reimbursement saya?"
+"Status RB-20260902-7A987A bagaimana?"
+"Ada berapa reimbursement saya yang masih pending?"
+"Ringkas reimbursement saya."
+
+Routing:
+- status terbaru tanpa kode → mode LATEST
+- menyebut RB-... → mode BY_REQUEST_CODE
+- meminta jumlah/ringkasan → mode SUMMARY
+- meminta daftar yang masih pending → mode PENDING
+- jika menyebut jenis MEDICAL/TRAVEL/MEAL/OTHER,
+  isi reimbursementType bila relevan.
+
+PENTING:
+- get_reimbursement_status bersifat READ-ONLY.
+- Employee identity sudah di-scope server.
+- Jangan meminta employeeId dari pengguna.
+- Jangan gunakan RAG untuk membaca status transaksi.
+- Jangan membuat reimbursement baru untuk pertanyaan status.
+- status adalah business status.
+- workflowStatus adalah status automation.
+- workflowStatus FAILED TIDAK berarti reimbursement REJECTED.
+- Jika request tidak ditemukan, jangan menebak apakah kode
+  tersebut milik employee lain.
 
 6. INTENT MEMBUAT REIMBURSEMENT REQUEST
 
@@ -1340,6 +1439,42 @@ Jangan mengarang informasi yang tidak tersedia.
       /* ===================================================
          REIMBURSEMENT INTENT / DRAFT
       =================================================== */
+
+      /* ===================================================
+         REIMBURSEMENT STATUS — 8J.2
+      =================================================== */
+
+      else if (
+        toolCall.name ===
+        'get_reimbursement_status'
+      ) {
+        const rawResult =
+          await getReimbursementStatusTool.invoke(
+            toolCall.args as any,
+          );
+
+        toolResult =
+          String(
+            rawResult,
+          );
+
+        /*
+         * Status transaksi tidak memiliki source dokumen RAG.
+         */
+        extractedSources =
+          [];
+
+        console.info(
+          '[REIMBURSEMENT STATUS TOOL]',
+          {
+            employeeId:
+              serverEmployeeId,
+
+            args:
+              toolCall.args,
+          },
+        );
+      }
 
       else if (
         toolCall.name ===
@@ -1991,6 +2126,24 @@ Jangan mengarang informasi yang tidak tersedia.
       =================================================== */
 
       const finalSystemPrompt = `
+      FRESHNESS GUARD FINAL ANSWER — 8J.3
+
+      Jika HASIL TOOL / CONTEXT berasal dari tool transactional:
+      - gunakan hasil tool pada TURN INI sebagai source of truth;
+      - abaikan nilai status/saldo lama dari chat history jika berbeda;
+      - jangan mencampurkan data transactional lama dengan hasil terbaru;
+      - jangan mengatakan "berdasarkan percakapan sebelumnya"
+        untuk current state;
+      - jika tool tidak menemukan data, katakan tidak ditemukan;
+      - jika tool gagal, jangan fallback ke status lama dari history.
+
+      Tool transactional yang authoritative:
+      - EMPLOYEE_CONTEXT_RESULT;
+      - LEAVE_STATUS_RESULT;
+      - OVERTIME_STATUS / hasil get_overtime_status;
+      - REIMBURSEMENT_STATUS_RESULT.
+
+
       Anda adalah "AI HR Assistant" yang cerdas,
       akurat, dan ramah.
 
@@ -2198,6 +2351,69 @@ Jangan mengarang informasi yang tidak tersedia.
       JANGAN meminta pengguna mengonfirmasi.
       JANGAN memanggil tool lagi.
 
+
+      ATURAN REIMBURSEMENT STATUS — 8J.2
+
+      HASIL TOOL dapat memiliki:
+      "type": "REIMBURSEMENT_STATUS_RESULT"
+
+      Jika type = REIMBURSEMENT_STATUS_RESULT,
+      berarti pengguna sedang MEMBACA data transaksi
+      reimbursement, bukan membuat request baru.
+
+      Gunakan hasil tool sebagai source of truth.
+
+      1. Jika found = false:
+      - gunakan message jika tersedia;
+      - katakan request/data reimbursement tidak ditemukan;
+      - jangan menebak apakah request milik employee lain;
+      - jangan membuat request baru;
+      - jangan meminta konfirmasi.
+
+      2. Jika mode = LATEST atau BY_REQUEST_CODE:
+      - gunakan latest;
+      - tampilkan requestCode;
+      - reimbursementType;
+      - expenseDate;
+      - amount + currency;
+      - status;
+      - managerDecision;
+      - workflowStatus;
+      - manager.name jika tersedia;
+      - managerDecisionNote hanya jika relevan.
+
+      3. Jika mode = SUMMARY:
+      - gunakan summary.total;
+      - summary.pending;
+      - summary.approved;
+      - summary.rejected;
+      - summary.cancelled;
+      - gunakan filteredCount jika ada filter eksplisit.
+
+      4. Jika mode = PENDING:
+      - gunakan count dan requests;
+      - jangan mengatakan semua klaim pending jika
+        tool hanya mengembalikan subset karena limit.
+
+      5. BUSINESS STATUS:
+      - PENDING = masih menunggu keputusan bisnis;
+      - APPROVED = disetujui;
+      - REJECTED = ditolak;
+      - CANCELLED = dibatalkan;
+      - DRAFT = draft bila state tersebut ada.
+
+      6. WORKFLOW STATUS:
+      workflowStatus hanya menjelaskan automation.
+      Jika workflowStatus = FAILED tetapi status = PENDING,
+      jelaskan bahwa request masih PENDING dan automation
+      mengalami masalah. JANGAN menyebutnya ditolak.
+
+      Jangan menampilkan internal database ID.
+      Jangan melakukan policy validation untuk pertanyaan status.
+      Jangan menggunakan knowledge base / RAG untuk mengganti
+      status transactional dari hasil tool.
+      Jangan meminta pengguna mengonfirmasi.
+      Jangan memanggil tool lagi.
 
       KHUSUS PEMBUATAN REIMBURSEMENT:
 
@@ -2547,7 +2763,7 @@ Jangan mengarang informasi yang tidak tersedia.
                 canConfirm,
 
                 actionToken,
-              
+
 
                 reimbursementAction:
                   reimbursementPendingAction
