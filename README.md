@@ -71,9 +71,9 @@ flowchart LR
 
     TOOLS --> RAG["RAG Retrieval"]
     RAG --> EMB["Gemini Embeddings"]
-    EMB --> PGV[("Supabase PostgreSQL + pgvector")]
+    EMB --> PGV["Supabase PostgreSQL + pgvector"]
 
-    TOOLS --> DB[("Transactional PostgreSQL")]
+    TOOLS --> DB["Transactional PostgreSQL"]
     TOOLS --> POLICY["Deterministic Policy Validation"]
     TOOLS --> TOKEN["Signed Confirmation Token"]
 
@@ -89,6 +89,7 @@ flowchart LR
     DB --> STATUS["Fresh Transactional Status Tools"]
     STATUS --> CHAT
     CHAT --> UI
+```
 
 ### Request lifecycle
 
@@ -104,17 +105,17 @@ sequenceDiagram
     E->>AI: Natural-language request
     AI->>RAG: Retrieve relevant policy
     RAG-->>AI: Policy context
-    AI->>AI: Parse + deterministic validation
-    AI-->>E: Draft + confirmation action
+    AI->>AI: Parse and validate
+    AI-->>E: Draft and confirmation action
 
     E->>AI: Confirm
     AI->>DB: Create request
     AI->>N8N: Trigger approval workflow
     N8N->>M: Human approval
-    M-->>N8N: Approve / reject
+    M-->>N8N: Approve or reject
     N8N->>DB: Protected callback updates state
 
-    E->>AI: "What is my request status?"
+    E->>AI: Check request status
     AI->>DB: Read current transactional state
     DB-->>AI: Latest status
     AI-->>E: Fresh answer
