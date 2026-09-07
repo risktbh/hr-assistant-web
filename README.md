@@ -63,33 +63,32 @@ The application triggers n8n workflows for Leave, Overtime, and Reimbursement. n
 
 ```mermaid
 flowchart LR
-    U[Employee] --> UI[Next.js UI]
-    UI --> CHAT[/api/chat]
+    U["Employee"] --> UI["Next.js UI"]
+    UI --> CHAT["/api/chat"]
 
-    CHAT --> LLM[Gemini]
-    CHAT --> TOOLS[Agent Tools]
+    CHAT --> LLM["Gemini"]
+    CHAT --> TOOLS["Agent Tools"]
 
-    TOOLS --> RAG[RAG Retrieval]
-    RAG --> EMB[Gemini Embeddings]
-    EMB --> PGV[(Supabase PostgreSQL + pgvector)]
+    TOOLS --> RAG["RAG Retrieval"]
+    RAG --> EMB["Gemini Embeddings"]
+    EMB --> PGV[("Supabase PostgreSQL + pgvector")]
 
-    TOOLS --> DB[(Transactional PostgreSQL)]
-    TOOLS --> POLICY[Deterministic Policy Validation]
-    TOOLS --> TOKEN[Signed Confirmation Token]
+    TOOLS --> DB[("Transactional PostgreSQL")]
+    TOOLS --> POLICY["Deterministic Policy Validation"]
+    TOOLS --> TOKEN["Signed Confirmation Token"]
 
-    TOKEN --> CONFIRM[Confirm API]
+    TOKEN --> CONFIRM["Confirm API"]
     CONFIRM --> DB
-    CONFIRM --> N8N[n8n Workflows]
+    CONFIRM --> N8N["n8n Workflows"]
 
-    N8N --> HUMAN[Manager / Second Approver]
+    N8N --> HUMAN["Manager / Second Approver"]
     HUMAN --> N8N
-    N8N --> CALLBACK[Protected Callback APIs]
+    N8N --> CALLBACK["Protected Callback APIs"]
     CALLBACK --> DB
 
-    DB --> STATUS[Fresh Transactional Status Tools]
+    DB --> STATUS["Fresh Transactional Status Tools"]
     STATUS --> CHAT
     CHAT --> UI
-```
 
 ### Request lifecycle
 
